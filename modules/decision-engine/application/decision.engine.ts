@@ -12,7 +12,7 @@ import type {
 } from "../types/decision.types";
 import type { ScoreSnapshot } from "../domain/decision.rules";
 import { applyDecisionMatrix } from "../types/decision.types";
-import { evaluateDecisionRules } from "./decision.rules";
+import { evaluateDecisionRules } from "../domain/decision.rules";
 import { prisma } from "@/lib/db/prisma";
 import { persistDecision } from "../repositories/historical-decision.repository";
 

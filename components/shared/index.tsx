@@ -5,7 +5,6 @@
  *             Sprint 7 requirements (lifecycle cards, Order+Item toggle, period selector)
  */
 import React from "react";
- */
 
 import type {
   SmartAlertProps, LifecycleStatusCard, ViewModeToggleProps,

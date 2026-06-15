@@ -33,7 +33,7 @@ import {
   normalizeSettlementRate,
   normalizeTrendDelta,
   normalizeDeliveredRoas,
-} from "./health.normalizers";
+} from "../domain/health.normalizers";
 
 // ── Weight validation (054: WEIGHTING RULES — Σ = 100%) ──────────────────
 
