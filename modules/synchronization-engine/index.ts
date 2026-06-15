@@ -20,3 +20,19 @@ export { SyncScheduler } from "./scheduler/sync.scheduler";
 
 // Validation
 export { runValidationPipeline, validateSchema, validateRequiredFields, checkDuplicate, buildStagedRecord } from "./domain/validation.pipeline";
+
+// Registry (073: Provider Registry)
+export { PROVIDER_REGISTRY, resolveProviderStatus, getProviderStatuses } from "./registry/provider.registry";
+export type { ProviderKey, ProviderCategory, ProviderStatus, ProviderDefinition } from "./registry/provider.registry";
+
+// Retry engine (073: Retry Engine)
+export { withRetry, isRetryableError, RETRY_DELAYS_MS as RETRY_DELAYS } from "./retry/retry.engine";
+export type { RetryOptions, RetryResult } from "./retry/retry.engine";
+
+// Business events (074: Business Event Model)
+export { buildBusinessEvent, orderStatusToEventType, shipmentStatusToEventType } from "./events/business-event.factory";
+export type { BusinessEvent, BusinessEventType } from "./events/business-event.factory";
+
+// Sync history / audit (073: Audit)
+export { recordSyncStart, recordSyncEnd, getSyncHistory } from "./events/sync-history";
+export type { SyncHistoryRecord, SyncOutcome } from "./events/sync-history";
