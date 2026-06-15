@@ -10,8 +10,8 @@
  * No invented rules (CP-002).
  */
 
-import type { DecisionRecord, DecisionPriority } from "./decision.types";
-import { DECISION_IDS } from "./decision.types";
+import type { DecisionRecord, DecisionPriority } from "../types/decision.types";
+import { DECISION_IDS } from "../types/decision.types";
 
 export interface ScoreSnapshot {
   businessHealth:     number;
