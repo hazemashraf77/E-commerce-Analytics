@@ -50,4 +50,15 @@ Examples:
 
 ## Repository Documents
 
-All 63 repository documents are version-controlled in `docs/repository/`.
+All 63 repository documents are version-controlled in `docs/repository/`. 
+
+
+
+
+
+
+
+
+
+
+Deployment Trigger
