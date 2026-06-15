@@ -1,0 +1,4 @@
+# Pre-commit pipeline per 048_PROJECT_BOOTSTRAP.md: Lint -> Type Check -> Unit Tests.
+pnpm lint-staged
+pnpm typecheck
+pnpm test:run

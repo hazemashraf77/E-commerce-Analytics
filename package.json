@@ -1,0 +1,79 @@
+{
+  "name": "ecommerce-analytics",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Enterprise E-Commerce Analytics Platform \u2014 Repository-Driven (Repository v3.0 Ultimate)",
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "lint": "next lint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:status": "prisma migrate status",
+    "verify:bootstrap": "bash scripts/verify-bootstrap.sh",
+    "prepare": "node -e \"if(process.env.CI !== '1' && process.env.VERCEL !== '1') { require('child_process').execSync('husky', {stdio:'inherit'}) }\" || true",
+    "postinstall": "prisma generate",
+    "build:preview": "prisma generate && next build"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "3.10.0",
+    "@prisma/client": "6.8.2",
+    "@radix-ui/react-dialog": "1.1.6",
+    "@radix-ui/react-select": "2.2.5",
+    "@radix-ui/react-slot": "1.2.3",
+    "@radix-ui/react-tabs": "1.1.4",
+    "@supabase/ssr": "0.6.1",
+    "@supabase/supabase-js": "2.49.4",
+    "@tanstack/react-query": "5.76.1",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "date-fns": "4.1.0",
+    "tailwind-merge": "2.6.0",
+    "lucide-react": "0.511.0",
+    "next": "15.3.2",
+    "next-intl": "4.1.0",
+    "pino": "9.6.0",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-hook-form": "7.56.4",
+    "recharts": "2.15.3",
+    "zod": "3.25.28"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.21",
+    "@types/react": "19.1.5",
+    "@types/react-dom": "19.1.5",
+    "autoprefixer": "10.4.21",
+    "eslint": "9.27.0",
+    "eslint-config-next": "15.3.2",
+    "eslint-config-prettier": "10.1.5",
+    "husky": "9.1.7",
+    "lint-staged": "15.5.2",
+    "playwright": "1.52.0",
+    "postcss": "8.5.3",
+    "prettier": "3.5.3",
+    "prisma": "6.8.2",
+    "tailwindcss": "3.4.17",
+    "typescript": "5.8.3",
+    "vitest": "3.1.4"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,css}": [
+      "prettier --write"
+    ]
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "packageManager": "pnpm@10.11.0"
+}

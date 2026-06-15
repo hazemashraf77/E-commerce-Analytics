@@ -1,0 +1,33 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# next.js
+.next/
+out/
+next-env.d.ts
+
+# production
+build/
+
+# environment — secrets are never committed (SR-001, SR-002)
+.env
+.env.local
+.env.*.local
+
+# testing
+coverage/
+playwright-report/
+test-results/
+
+# misc
+.DS_Store
+*.pem
+*.log
+
+# prisma
+prisma/*.db
+
+# database operational artifacts (026: backups never committed)
+database/backups/*
+!database/backups/.gitkeep

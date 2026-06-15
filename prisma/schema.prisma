@@ -1,0 +1,851 @@
+// =====================================================================
+// Prisma Schema — Sprint 1: Database Foundation
+//
+// Repository references:
+//   004_CANONICAL_DATA_MODEL.md  (entities 001–025, all status enums)
+//   006_DATABASE_SPECIFICATION.md (conventions, policies, constraints)
+//   025_DATABASE_MIGRATIONS.md    (migration rules)
+//   005_SOURCE_OF_TRUTH_MATRIX.md (ownership)
+//   002_BUSINESS_RULES.md         (BR-005–009)
+//   003_DATA_DICTIONARY.md        (terms 013–050)
+//
+// Design rules enforced:
+//   • UUID primary keys (006: PRIMARY KEY POLICY)
+//   • Decimal(18,4) for all money/quantity (006: MONEY/QUANTITY POLICY)
+//   • createdAt/updatedAt on every business table (006: TIMESTAMP POLICY)
+//   • No calculated financial values stored unless explicitly documented
+//   • Soft delete on auditable business entities (006: SOFT DELETE POLICY)
+//   • Hard delete prohibited on Orders/Inventory/Finance/Audit (006)
+//   • Status values always enum (006: STATUS POLICY)
+//   • Immutable event tables: no updatedAt (Revenue/Cost/Profit/Audit/InventoryMovement)
+//   • No business logic in schema (ER-001)
+//   • Financial formulas belong to Financial Engine, not DB (ER-001, ER-002)
+// =====================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// ENUMS
+// Source: 004_CANONICAL_DATA_MODEL.md (status models, movement types)
+// ─────────────────────────────────────────────────────────────────────
+
+/// ORDER STATUS MODEL (004: Order Status Model)
+enum OrderStatus {
+  DRAFT
+  PENDING
+  CONFIRMED
+  PROCESSING
+  READY_TO_SHIP
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  CLOSED
+}
+
+/// SHIPMENT STATUS MODEL (004: Shipment Status Model)
+enum ShipmentStatus {
+  CREATED
+  PICKED_UP
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  DELIVERY_FAILED
+  RETURNED
+  EXPECTED_RETURN
+  CANCELLED
+}
+
+/// PAYMENT STATUS MODEL (004: Payment Status Model)
+enum PaymentStatus {
+  PENDING
+  PAID
+  PARTIALLY_PAID
+  REFUNDED
+  FAILED
+  UNKNOWN
+}
+
+/// INVENTORY MOVEMENT TYPES (004: Inventory Movement Types)
+enum InventoryMovementType {
+  PURCHASE
+  SALE
+  PHYSICAL_RETURN
+  EXCHANGE
+  MANUAL_ADJUSTMENT
+  INVENTORY_CORRECTION
+  OPENING_BALANCE
+}
+
+/// FINANCIAL EVENT TYPES (004: Financial Event Types)
+enum FinancialEventType {
+  REVENUE
+  COGS
+  SHIPPING_EXPENSE
+  MARKETING_EXPENSE
+  FIXED_EXPENSE
+  VARIABLE_EXPENSE
+  REFUND
+  COMPENSATION
+  MANUAL_ADJUSTMENT
+  SETTLEMENT
+  CASH_IN
+  CASH_OUT
+}
+
+/// CASH FLOW DIRECTION (004: Entity 017)
+enum CashFlowDirection {
+  CASH_IN
+  CASH_OUT
+}
+
+/// MARKETING PLATFORM MODEL (004: Marketing Platform Model)
+enum MarketingPlatform {
+  META
+  TIKTOK
+  DIRECT
+  ORGANIC
+  REFERRAL
+  UNKNOWN
+}
+
+/// GENERAL STATUS — active/inactive for configuration entities
+enum EntityStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+/// REVENUE RECOGNITION STATUS (004: Entity 014)
+enum RecognitionStatus {
+  RECOGNIZED
+  PENDING
+  REVERSED
+}
+
+/// SETTLEMENT STATUS (004: Entity 010)
+enum SettlementStatus {
+  EXPECTED
+  RECEIVED
+  RECONCILED
+  DISPUTED
+}
+
+/// AI RECOMMENDATION CATEGORY (004: Entity 023)
+enum AiRecommendationCategory {
+  REVENUE
+  PROFIT
+  INVENTORY
+  MARKETING
+  OPERATIONS
+  CASH_FLOW
+  RISK
+}
+
+/// SYNC JOB STATUS (006: System Tables)
+enum SyncJobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+/// AUDIT ACTION (004: Entity 025)
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  SOFT_DELETE
+  RESTORE
+  IMPORT
+  EXPORT
+  LOGIN
+  LOGOUT
+  CONFIG_CHANGE
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// DOMAIN: CORE (006: Table Category 001)
+// ─────────────────────────────────────────────────────────────────────
+
+/// ENTITY 001 — Store (004)
+/// Root owner of all business data. Every entity ultimately references a Store.
+model Store {
+  id        String       @id @default(uuid()) @db.Uuid
+  name      String
+  code      String       @unique
+  currency  String       @db.VarChar(3)   // ISO 4217 (006: CURRENCY POLICY)
+  timeZone  String
+  status    EntityStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  // Relationships
+  products         Product[]
+  orders           Order[]
+  inventoryLayers  InventoryLayer[]
+  campaigns        Campaign[]
+  marketingSpends  MarketingSpend[]
+  fixedExpenses    FixedExpense[]
+  variableExpenses VariableExpense[]
+  dailySnapshots   DailySnapshot[]
+  settings         Setting[]
+  syncJobs         SyncJob[]
+
+  @@map("stores")
+}
+
+/// Users table — authentication managed by Supabase Auth.
+/// This table holds business profile only; auth.users is the auth source.
+model User {
+  id           String       @id @default(uuid()) @db.Uuid
+  supabaseId   String       @unique                      // references auth.users.id
+  email        String       @unique
+  fullName     String
+  role         String                                    // Role enum values from 032_PERMISSION_MATRIX
+  isActive     Boolean      @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  // Audit trail
+  adjustmentsCreated    FinancialAdjustment[]
+  simulationsCreated    ScenarioSimulation[]
+  auditRecords          AuditRecord[]
+
+  @@map("users")
+}
+
+/// Application settings — per Store (006: Configuration Tables)
+model Setting {
+  id        String   @id @default(uuid()) @db.Uuid
+  storeId   String   @db.Uuid
+  key       String
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id])
+
+  @@unique([storeId, key])
+  @@index([storeId])
+  @@map("settings")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// DOMAIN: PRODUCTS (006: Table Category 002)
+// ─────────────────────────────────────────────────────────────────────
+
+/// ENTITY 002 — Product (004)
+model Product {
+  id                  String       @id @default(uuid()) @db.Uuid
+  storeId             String       @db.Uuid
+  sku                 String
+  name                String
+  category            String?
+  status              EntityStatus @default(ACTIVE)
+  defaultSellingPrice Decimal      @db.Decimal(18, 4)    // (006: MONEY POLICY)
+  isDeleted           Boolean      @default(false)        // (006: SOFT DELETE)
+  deletedAt           DateTime?
+  deletedBy           String?      @db.Uuid
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  store            Store            @relation(fields: [storeId], references: [id])
+  aliases          ProductAlias[]
+  orderItems       OrderItem[]
+  inventoryLayers  InventoryLayer[]
+  inventoryMovements InventoryMovement[]
+
+  @@unique([storeId, sku])                               // (006: UNIQUE CONSTRAINT POLICY)
+  @@index([storeId])
+  @@index([status])
+  @@map("products")
+}
+
+/// ENTITY 003 — Product Alias (004)
+/// Maps external marketing names to one Canonical Product.
+model ProductAlias {
+  id         String       @id @default(uuid()) @db.Uuid
+  productId  String       @db.Uuid
+  aliasName  String
+  platform   MarketingPlatform
+  status     EntityStatus @default(ACTIVE)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  product Product @relation(fields: [productId], references: [id])
+
+  @@unique([productId, aliasName, platform])
+  @@index([productId])
+  @@index([platform])
+  @@map("product_aliases")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// DOMAIN: ORDERS (006: Table Category 003)
+// ─────────────────────────────────────────────────────────────────────
+
+/// ENTITY 004 — Order (004)
+/// Imported from Eazy Order (005: Source of Truth — Orders → Eazy Order)
+/// Orders are never manually created (006: Table Category 003)
+model Order {
+  id                  String        @id @default(uuid()) @db.Uuid
+  storeId             String        @db.Uuid
+  provider            String        // e.g. "EAZY_ORDER" (004: Order Provider Model)
+  providerOrderId     String        // external ID from provider
+  orderDate           DateTime
+  customerShippingFee Decimal       @db.Decimal(18, 4)  // (003: Term 026)
+  paymentMethod       String
+  paymentStatus       PaymentStatus @default(PENDING)
+  orderStatus         OrderStatus   @default(PENDING)
+  shipmentStatus      ShipmentStatus?
+  marketingSource     MarketingPlatform?
+  campaignId          String?       @db.Uuid
+  importedAt          DateTime      @default(now())       // (006: TIMESTAMP POLICY)
+  syncedAt            DateTime?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  store          Store                @relation(fields: [storeId], references: [id])
+  campaign       Campaign?            @relation(fields: [campaignId], references: [id])
+  orderItems     OrderItem[]
+  shipment       Shipment?
+  financialAdjustments FinancialAdjustment[]
+  revenueEvents  RevenueEvent[]
+  costEvents     CostEvent[]
+  profitEvents   ProfitEvent[]
+  cashFlowEvents CashFlowEvent[]
+
+  @@unique([storeId, provider, providerOrderId])          // (006: UNIQUE CONSTRAINT POLICY)
+  @@index([storeId])
+  @@index([orderDate])                                     // (006: INDEXING POLICY)
+  @@index([orderStatus])
+  @@index([shipmentStatus])
+  @@index([campaignId])
+  @@map("orders")
+}
+
+/// ENTITY 005 — Order Item (004)
+model OrderItem {
+  id                  String   @id @default(uuid()) @db.Uuid
+  orderId             String   @db.Uuid
+  productId           String   @db.Uuid
+  quantity            Decimal  @db.Decimal(18, 4)         // (006: QUANTITY POLICY)
+  unitPrice           Decimal  @db.Decimal(18, 4)
+  discount            Decimal  @db.Decimal(18, 4) @default(0)
+  allocatedRevenue    Decimal? @db.Decimal(18, 4)         // set by Financial Engine
+  fifoCost            Decimal? @db.Decimal(18, 4)         // set by Inventory Engine (FIFO)
+  profitContribution  Decimal? @db.Decimal(18, 4)         // set by Financial Engine
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  order   Order              @relation(fields: [orderId], references: [id])
+  product Product            @relation(fields: [productId], references: [id])
+  inventoryMovements InventoryMovement[]
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// DOMAIN: SHIPPING (006: Table Category 004)
+// ─────────────────────────────────────────────────────────────────────
+
+/// ENTITY 006 — Shipment (004)
+/// Source of truth: Bosta (005: Actual Shipping Cost → Bosta)
+model Shipment {
+  id                 String         @id @default(uuid()) @db.Uuid
+  orderId            String         @unique @db.Uuid      // one shipment per order
+  providerShipmentId String         @unique               // Bosta's ID
+  shipmentStatus     ShipmentStatus @default(CREATED)
+  shippingZone       String?
+  deliveryDate       DateTime?                            // null until delivered
+  returnDate         DateTime?                            // null unless returned
+  actualShippingCost Decimal        @db.Decimal(18, 4)   // (005: SoT → Bosta)
+  codAmount          Decimal        @db.Decimal(18, 4) @default(0)
+  settlementId       String?        @db.Uuid
+  importedAt         DateTime       @default(now())
+  syncedAt           DateTime?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  order      Order       @relation(fields: [orderId], references: [id])
+  settlement Settlement? @relation(fields: [settlementId], references: [id])
+
+  @@index([shipmentStatus])                               // (006: INDEXING POLICY)
+  @@index([deliveryDate])
+  @@index([settlementId])
+  @@map("shipments")
+}
+
+/// ENTITY 010 — Settlement (004)
+/// Represents one settlement received from Bosta.
+model Settlement {
+  id                String           @id @default(uuid()) @db.Uuid
+  providerSettlementId String        @unique               // (006: UNIQUE CONSTRAINT POLICY)
+  settlementDate    DateTime
+  expectedAmount    Decimal          @db.Decimal(18, 4)
+  actualAmount      Decimal          @db.Decimal(18, 4)
+  shippingCharges   Decimal          @db.Decimal(18, 4) @default(0)
+  returnCharges     Decimal          @db.Decimal(18, 4) @default(0)
+  exchangeCharges   Decimal          @db.Decimal(18, 4) @default(0)
+  additionalCharges Decimal          @db.Decimal(18, 4) @default(0)
+  netTransfer       Decimal          @db.Decimal(18, 4)
+  status            SettlementStatus @default(EXPECTED)
+  importedAt        DateTime         @default(now())
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  shipments Shipment[]
+
+  @@index([settlementDate])                               // (006: INDEXING POLICY)
+  @@index([status])
+  @@map("settlements")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// DOMAIN: INVENTORY (006: Table Category 005)
+// ─────────────────────────────────────────────────────────────────────
+
+/// ENTITY 007 — Inventory Layer (004)
+/// Represents one FIFO purchase batch (008_INVENTORY_FIFO_ENGINE)
+/// Source of truth: Inventory Engine (005: Product Cost/Quantity → Inventory Engine)
+model InventoryLayer {
+  id                String       @id @default(uuid()) @db.Uuid
+  storeId           String       @db.Uuid
+  productId         String       @db.Uuid
+  purchaseDate      DateTime
+  purchaseQuantity  Decimal      @db.Decimal(18, 4)
+  remainingQuantity Decimal      @db.Decimal(18, 4)
+  unitCost          Decimal      @db.Decimal(18, 4)       // (006: MONEY POLICY)
+  supplier          String?
+  purchaseReference String?
+  isDeleted         Boolean      @default(false)           // (006: SOFT DELETE)
+  deletedAt         DateTime?
+  deletedBy         String?      @db.Uuid
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  store             Store              @relation(fields: [storeId], references: [id])
+  product           Product            @relation(fields: [productId], references: [id])
+  inventoryMovements InventoryMovement[]
+
+  @@index([storeId])
+  @@index([productId])
+  @@index([purchaseDate])
+  @@map("inventory_layers")
+}
+
+/// ENTITY 008 — Inventory Movement (004)
+/// Immutable — history must never be modified (006: HARD DELETE POLICY)
+model InventoryMovement {
+  id          String                @id @default(uuid()) @db.Uuid
+  productId   String                @db.Uuid
+  layerId     String?               @db.Uuid               // nullable: e.g. opening balance
+  movementType InventoryMovementType
+  quantity    Decimal               @db.Decimal(18, 4)
+  unitCost    Decimal               @db.Decimal(18, 4)
+  orderItemId String?               @db.Uuid               // related sale
+  relatedOrderId String?            @db.Uuid               // return/exchange reference
+  occurredAt  DateTime                                      // business event time (006: TIMESTAMP)
+  createdAt   DateTime              @default(now())
+  // No updatedAt — immutable (006: HARD DELETE, inventory history immutable)
+
+  product   Product         @relation(fields: [productId], references: [id])
+  layer     InventoryLayer? @relation(fields: [layerId], references: [id])
+  orderItem OrderItem?      @relation(fields: [orderItemId], references: [id])
+
+  @@index([productId])
+  @@index([movementType])
+  @@index([occurredAt])
+  @@map("inventory_movements")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// DOMAIN: FINANCE (006: Table Category 006)
+// ─────────────────────────────────────────────────────────────────────
+
+/// ENTITY 009 — Financial Adjustment (004)
+/// Manual financial records — BR-009: manual data requires justification
+model FinancialAdjustment {
+  id             String   @id @default(uuid()) @db.Uuid
+  orderId        String?  @db.Uuid                        // optional: may be store-level
+  adjustmentType String                                   // values from 036_ERROR_CATALOG sprint
+  amount         Decimal  @db.Decimal(18, 4)
+  reason         String
+  notes          String?
+  attachmentUrl  String?                                  // (006: ATTACHMENT STORAGE — ref only)
+  createdBy      String   @db.Uuid                       // (006: CREATED BY POLICY)
+  occurredAt     DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  order     Order? @relation(fields: [orderId], references: [id])
+  createdByUser User @relation(fields: [createdBy], references: [id])
+
+  @@index([orderId])
+  @@index([occurredAt])
+  @@index([createdBy])
+  @@map("financial_adjustments")
+}
+
+/// ENTITY 014 — Revenue Event (004)
+/// "Revenue Events exist only after Delivered" (004: Entity 014)
+/// Immutable — (006: HARD DELETE, financial records immutable)
+model RevenueEvent {
+  id                String            @id @default(uuid()) @db.Uuid
+  orderId           String            @db.Uuid
+  revenueAmount     Decimal           @db.Decimal(18, 4)
+  revenueDate       DateTime                               // = Delivered date (BR-005)
+  recognitionStatus RecognitionStatus @default(RECOGNIZED)
+  createdAt         DateTime          @default(now())
+  // No updatedAt — immutable
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@index([revenueDate])
+  @@map("revenue_events")
+}
+
+/// ENTITY 015 — Cost Event (004)
+/// Immutable — generated by Financial Engine after Delivered
+model CostEvent {
+  id              String   @id @default(uuid()) @db.Uuid
+  orderId         String   @db.Uuid
+  fifoCost        Decimal  @db.Decimal(18, 4)             // (005: COGS → Financial Engine)
+  recognitionDate DateTime
+  createdAt       DateTime @default(now())
+  // No updatedAt — immutable
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@index([recognitionDate])
+  @@map("cost_events")
+}
+
+/// ENTITY 016 — Profit Event (004)
+/// "Generated exclusively by the Financial Engine" (004: Entity 016)
+/// Stores pre-computed profit for reporting. No formula logic here (ER-001).
+model ProfitEvent {
+  id              String   @id @default(uuid()) @db.Uuid
+  orderId         String   @db.Uuid
+  grossProfit     Decimal  @db.Decimal(18, 4)             // (005: Gross Profit → Financial Engine)
+  netProfit       Decimal  @db.Decimal(18, 4)             // (005: Net Profit → Financial Engine)
+  profitMargin    Decimal  @db.Decimal(18, 4)             // stored result only, not calculated here
+  recognitionDate DateTime
+  createdAt       DateTime @default(now())
+  // No updatedAt — immutable
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@index([recognitionDate])
+  @@map("profit_events")
+}
+
+/// ENTITY 017 — Cash Flow Event (004)
+/// Direction: CASH_IN | CASH_OUT (004: Entity 017)
+model CashFlowEvent {
+  id          String            @id @default(uuid()) @db.Uuid
+  type        FinancialEventType
+  amount      Decimal           @db.Decimal(18, 4)
+  direction   CashFlowDirection
+  reference   String?
+  orderId     String?           @db.Uuid
+  eventDate   DateTime
+  createdAt   DateTime          @default(now())
+  // No updatedAt — immutable (cash flow history immutable per 006)
+
+  order Order? @relation(fields: [orderId], references: [id])
+
+  @@index([eventDate])
+  @@index([direction])
+  @@index([type])
+  @@map("cash_flow_events")
+}
+
+/// Fixed Expenses — recurring (003: Term 034)
+/// Manually maintained. Contributes to Net Profit via Financial Engine.
+model FixedExpense {
+  id          String       @id @default(uuid()) @db.Uuid
+  storeId     String       @db.Uuid
+  name        String
+  amount      Decimal      @db.Decimal(18, 4)
+  period      String       // e.g. "2024-01" (YYYY-MM)
+  category    String?
+  status      EntityStatus @default(ACTIVE)
+  isDeleted   Boolean      @default(false)
+  deletedAt   DateTime?
+  deletedBy   String?      @db.Uuid
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id])
+
+  @@index([storeId])
+  @@index([period])
+  @@map("fixed_expenses")
+}
+
+/// Variable Expenses — activity-based (003: Term 035)
+model VariableExpense {
+  id          String   @id @default(uuid()) @db.Uuid
+  storeId     String   @db.Uuid
+  name        String
+  amount      Decimal  @db.Decimal(18, 4)
+  expenseDate DateTime
+  category    String?
+  orderId     String?  @db.Uuid                           // optional: order-level expense
+  isDeleted   Boolean  @default(false)
+  deletedAt   DateTime?
+  deletedBy   String?  @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id])
+
+  @@index([storeId])
+  @@index([expenseDate])
+  @@map("variable_expenses")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// DOMAIN: MARKETING (006: Table Category 007)
+// ─────────────────────────────────────────────────────────────────────
+
+/// ENTITY 011 — Marketing Source (004)
+model MarketingSource {
+  id         String            @id @default(uuid()) @db.Uuid
+  name       String
+  platform   MarketingPlatform
+  status     EntityStatus      @default(ACTIVE)
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  @@unique([platform, name])
+  @@map("marketing_sources")
+}
+
+/// ENTITY 012 — Campaign (004)
+model Campaign {
+  id               String            @id @default(uuid()) @db.Uuid
+  storeId          String            @db.Uuid
+  platform         MarketingPlatform
+  platformCampaignId String
+  name             String
+  objective        String?
+  status           EntityStatus      @default(ACTIVE)
+  startDate        DateTime?
+  endDate          DateTime?
+  importedAt       DateTime          @default(now())
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  store          Store            @relation(fields: [storeId], references: [id])
+  orders         Order[]
+  marketingSpends MarketingSpend[]
+
+  @@unique([storeId, platform, platformCampaignId])
+  @@index([storeId])
+  @@index([platform])
+  @@index([startDate, endDate])
+  @@map("campaigns")
+}
+
+/// ENTITY 013 — Marketing Spend (004)
+/// Source of truth: Meta / TikTok (005)
+model MarketingSpend {
+  id         String            @id @default(uuid()) @db.Uuid
+  storeId    String            @db.Uuid
+  platform   MarketingPlatform
+  campaignId String?           @db.Uuid
+  spendDate  DateTime
+  amount     Decimal           @db.Decimal(18, 4)
+  currency   String            @db.VarChar(3)
+  importedAt DateTime          @default(now())
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  store    Store    @relation(fields: [storeId], references: [id])
+  campaign Campaign? @relation(fields: [campaignId], references: [id])
+
+  @@unique([storeId, platform, campaignId, spendDate])
+  @@index([storeId])
+  @@index([spendDate])
+  @@index([platform])
+  @@map("marketing_spends")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// DOMAIN: ANALYTICS (006: Table Category 008)
+// ─────────────────────────────────────────────────────────────────────
+
+/// ENTITY 024 — Daily Snapshot (004)
+/// Immutable KPI preservation (004: "Snapshots are immutable")
+model DailySnapshot {
+  id             String   @id @default(uuid()) @db.Uuid
+  storeId        String   @db.Uuid
+  snapshotDate   DateTime @db.Date
+  revenue        Decimal  @db.Decimal(18, 4)
+  profit         Decimal  @db.Decimal(18, 4)
+  cashPosition   Decimal  @db.Decimal(18, 4)
+  inventoryValue Decimal  @db.Decimal(18, 4)
+  marketingSpend Decimal  @db.Decimal(18, 4)
+  deliveryRate   Decimal  @db.Decimal(18, 4)  // stored result from Analytics Engine
+  returnRate     Decimal  @db.Decimal(18, 4)  // stored result from Analytics Engine
+  createdAt      DateTime @default(now())
+  // No updatedAt — immutable
+
+  store Store @relation(fields: [storeId], references: [id])
+
+  @@unique([storeId, snapshotDate])
+  @@index([storeId])
+  @@index([snapshotDate])
+  @@map("daily_snapshots")
+}
+
+/// ENTITY 018 — Forecast (004)
+/// "Forecasts never overwrite realized business values" (004: Entity 018)
+model Forecast {
+  id            String   @id @default(uuid()) @db.Uuid
+  storeId       String   @db.Uuid
+  forecastType  String
+  period        String                                    // e.g. "2024-01"
+  confidence    Decimal  @db.Decimal(5, 4)               // 0.0000 – 1.0000
+  expectedValue Decimal  @db.Decimal(18, 4)
+  generatedAt   DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  @@index([storeId])
+  @@index([period])
+  @@map("forecasts")
+}
+
+/// ENTITY 019 — Scenario Simulation (004)
+/// "Simulation never modifies production data" (004: Entity 019)
+model ScenarioSimulation {
+  id           String   @id @default(uuid()) @db.Uuid
+  storeId      String   @db.Uuid
+  scenarioName String
+  inputs       Json                                      // simulation inputs only
+  results      Json                                      // computed outputs
+  createdBy    String   @db.Uuid
+  createdAt    DateTime @default(now())
+  // No updatedAt — simulations are point-in-time snapshots
+
+  createdByUser User @relation(fields: [createdBy], references: [id])
+
+  @@index([storeId])
+  @@index([createdBy])
+  @@map("scenario_simulations")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// DOMAIN: AI (006: Table Category 009)
+// ─────────────────────────────────────────────────────────────────────
+
+/// ENTITY 023 — AI Recommendation (004)
+/// "AI Recommendations never modify business data" (004: Entity 023)
+model AiRecommendation {
+  id               String                   @id @default(uuid()) @db.Uuid
+  storeId          String                   @db.Uuid
+  priority         Int                                   // 1 = highest
+  category         AiRecommendationCategory
+  confidence       Decimal                  @db.Decimal(5, 4)
+  supportingKpis   Json                                  // KPI ID array
+  expectedImpact   String
+  recommendedAction String
+  generatedAt      DateTime                 @default(now())
+  createdAt        DateTime                 @default(now())
+
+  @@index([storeId])
+  @@index([generatedAt])
+  @@index([category])
+  @@map("ai_recommendations")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// DOMAIN: AUDIT (006: Table Category 010)
+// ─────────────────────────────────────────────────────────────────────
+
+/// ENTITY 025 — Audit Record (004)
+/// "Audit Records are immutable. Audit Records are never deleted." (004)
+model AuditRecord {
+  id            String      @id @default(uuid()) @db.Uuid
+  entityType    String
+  entityId      String
+  userId        String?     @db.Uuid
+  action        AuditAction
+  previousValue Json?
+  newValue      Json?
+  ipAddress     String?
+  userAgent     String?
+  occurredAt    DateTime    @default(now())
+  // No updatedAt — immutable (006: HARD DELETE POLICY — Audit Logs)
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([occurredAt])
+  @@map("audit_records")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// DOMAIN: SYSTEM (006: Table Category 011)
+// ─────────────────────────────────────────────────────────────────────
+
+/// Synchronization Jobs — tracks API sync runs (013_SYNCHRONIZATION_ENGINE)
+model SyncJob {
+  id           String        @id @default(uuid()) @db.Uuid
+  storeId      String        @db.Uuid
+  provider     String
+  status       SyncJobStatus @default(PENDING)
+  startedAt    DateTime?
+  completedAt  DateTime?
+  recordsFound Int           @default(0)
+  recordsSynced Int          @default(0)
+  recordsFailed Int          @default(0)
+  errorMessage String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id])
+
+  @@index([storeId])
+  @@index([provider])
+  @@index([status])
+  @@index([createdAt])
+  @@map("sync_jobs")
+}
+
+/// Import Staging — raw payloads before canonical conversion (006: IMPORT STAGING TABLES)
+model ImportStaging {
+  id               String        @id @default(uuid()) @db.Uuid
+  provider         String
+  entityType       String
+  externalId       String
+  rawPayload       Json
+  validationErrors Json?
+  status           SyncJobStatus @default(PENDING)
+  retryCount       Int           @default(0)
+  processedAt      DateTime?
+  importedAt       DateTime      @default(now())
+
+  @@index([provider, entityType])
+  @@index([externalId])
+  @@index([status])
+  @@map("import_staging")
+}
