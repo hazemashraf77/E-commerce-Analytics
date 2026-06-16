@@ -55,8 +55,8 @@ const WATERFALL_STEPS = [
   { label: "True Profit",     value: TRUE_PROFIT,  formulaId: "TRUE-001",color: "bg-emerald-500",isBase: true },
 ];
 
-function fmt(n: number, prefix = "EGP "): string {
-  return `${prefix}${Math.abs(n).toLocaleString("en-EG", { maximumFractionDigits: 0 })}`;
+function fmt(n: number | null | undefined, prefix = "EGP "): string {
+  return `${prefix}${Math.abs(n ?? 0).toLocaleString("en-EG", { maximumFractionDigits: 0 })}`;
 }
 function fmtPct(n: number): string { return `${n.toFixed(1)}%`; }
 
@@ -276,7 +276,7 @@ export default function FinanceDashboard() {
           {MOCK_PENDING_MONEY.map(m => (
             <div key={m.key} className="rounded-lg border border-gray-100 p-3 bg-gray-50">
               <p className="text-xs text-gray-500">{m.label}</p>
-              <p className="text-lg font-bold tabular-nums text-gray-800 mt-1">EGP {m.totalEgp.toLocaleString()}</p>
+              <p className="text-lg font-bold tabular-nums text-gray-800 mt-1">EGP {(m.totalEgp ?? 0).toLocaleString()}</p>
               <p className="text-xs text-gray-400">{m.ordersCount} orders</p>
             </div>
           ))}
@@ -288,7 +288,7 @@ export default function FinanceDashboard() {
                 <span className="font-medium text-gray-700">{s.label}</span>
                 <span className="text-xs text-gray-400 ml-2">{s.dateLabel}</span>
               </div>
-              <span className="font-bold tabular-nums text-green-700">EGP {s.amount.toLocaleString()}</span>
+              <span className="font-bold tabular-nums text-green-700">EGP {(s.amount ?? 0).toLocaleString()}</span>
             </div>
           ))}
         </div>
