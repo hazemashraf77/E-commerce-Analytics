@@ -1,32 +1,22 @@
 /**
- * GET /api/v1/formulas/inspect?kpiId=
- * Returns the KPI definition and formula reference for Formula Inspector.
- * "Every financial value produced by the Financial Engine shall support
- *  Formula Inspector." (007)
- * Auth: READ_ONLY minimum
+ * GET /api/v1/formulas/inspect?id=FIN-001
+ * Returns formula definition from the Formula Registry.
+ * Repository: 068_FORMULA_ENGINE.md — Formula Inspector
+ * Auth: READ_ONLY
  */
 import { type NextRequest } from "next/server";
 import { withAuth, type AuthContext } from "@/lib/api/middleware";
-import { ok, notFound, validationError } from "@/lib/api/response";
-import { z } from "zod";
-import { getKpiDefinition, KPI_REGISTRY } from "@/modules/analytics-engine";
-
-const Schema = z.object({ kpiId: z.string().min(1).optional() });
+import { ok, notFound } from "@/lib/api/response";
+import { getFormula, FORMULA_REGISTRY } from "@/modules/formula-engine";
 
 async function handler(request: NextRequest, auth: AuthContext) {
-  const parsed = Schema.safeParse(Object.fromEntries(request.nextUrl.searchParams));
-  if (!parsed.success) return validationError("Invalid parameters");
-
-  const { kpiId } = parsed.data;
-
-  if (kpiId) {
-    const def = getKpiDefinition(kpiId);
-    if (!def) return notFound(`KPI ${kpiId}`);
-    return ok(def, { requestId: auth.requestId });
+  const id = request.nextUrl.searchParams.get("id");
+  if (!id) {
+    return ok(Object.values(FORMULA_REGISTRY), { requestId: auth.requestId, count: Object.keys(FORMULA_REGISTRY).length });
   }
-
-  // Return full registry when no kpiId specified
-  return ok([...KPI_REGISTRY], { requestId: auth.requestId, count: KPI_REGISTRY.length });
+  const formula = getFormula(id);
+  if (!formula) return notFound(`Formula ${id}`);
+  return ok(formula, { requestId: auth.requestId });
 }
 
 export const GET = withAuth(handler, "READ_ONLY");

@@ -6,6 +6,7 @@
  */
 
 import { useState } from "react";
+import Link from "next/link";
 import type { DashboardPeriod, ViewMode } from "@/types/dashboard.types";
 import {
   MOCK_FINANCIAL_KPIS, MOCK_SCORES, MOCK_DECISIONS, MOCK_SMART_ALERTS,
@@ -14,6 +15,7 @@ import {
   MOCK_ROAS_FULL_LIFECYCLE, MOCK_COST_EVOLUTION, MOCK_HEALTH_STRIP,
   MOCK_INVENTORY_CAPACITY,
 } from "@/lib/dashboard/mock-data";
+import { MOCK_PRODUCT_INTELLIGENCE } from "@/modules/formula-engine";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { ScoreCard } from "@/components/scores/ScoreCard";
 import { DecisionCard } from "@/components/decisions/DecisionCard";
@@ -181,6 +183,83 @@ export default function ExecutiveDashboard() {
       <div className="bg-white rounded-xl border border-gray-200 p-4">
         <SectionHeader title="KPI Comparison" titleAr="مقارنة المؤشرات" />
         <KpiComparisonChart data={COMPARISON_DATA} />
+      </div>
+
+      {/* ── Product Intelligence Preview (Executive Table) ───────────── */}
+      <div>
+        <SectionHeader title="Product Intelligence" titleAr="ذكاء المنتجات"
+          action={<Link href="/en/dashboard/products" className="text-xs text-indigo-600 underline">View full table →</Link>} />
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50 border-b border-gray-100">
+                <tr>
+                  <th className="px-3 py-2 text-left font-semibold text-gray-500">Product</th>
+                  <th className="px-2 py-2 text-center font-semibold text-gray-500">Delivered</th>
+                  <th className="px-2 py-2 text-right font-semibold text-gray-500">Revenue</th>
+                  <th className="px-2 py-2 text-right font-semibold text-gray-500">True Profit</th>
+                  <th className="px-2 py-2 text-center font-semibold text-gray-500">Margin</th>
+                  <th className="px-2 py-2 text-right font-semibold text-gray-500">True CPA</th>
+                  <th className="px-2 py-2 text-center font-semibold text-gray-500">True ROAS</th>
+                  <th className="px-2 py-2 text-center font-semibold text-gray-500">PPAP</th>
+                  <th className="px-2 py-2 text-center font-semibold text-gray-500">Stock</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {MOCK_PRODUCT_INTELLIGENCE.map(p => (
+                  <tr key={p.productId} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-3 py-2">
+                      <div className="font-medium text-gray-800 truncate max-w-36" title={p.productName}>{p.productName}</div>
+                      <div className="text-gray-400 font-mono text-xs">{p.sku}</div>
+                    </td>
+                    <td className="px-2 py-2 text-center font-semibold text-green-700">{p.ordersDelivered}</td>
+                    <td className="px-2 py-2 text-right tabular-nums">EGP {p.revenue.toLocaleString()}</td>
+                    <td className={`px-2 py-2 text-right tabular-nums font-semibold ${p.trueProfit >= 0 ? "text-green-700" : "text-red-600"}`}>
+                      EGP {p.trueProfit.toLocaleString()}
+                    </td>
+                    <td className="px-2 py-2 text-center">{p.profitMarginPct.toFixed(1)}%</td>
+                    <td className="px-2 py-2 text-right tabular-nums">{p.trueCpa !== null ? `EGP ${p.trueCpa.toFixed(0)}` : "—"}</td>
+                    <td className={`px-2 py-2 text-center font-semibold ${(p.trueRoas ?? 0) >= 1 ? "text-green-700" : "text-red-600"}`}>
+                      {p.trueRoas !== null ? `${p.trueRoas.toFixed(2)}×` : "—"}
+                    </td>
+                    <td className={`px-2 py-2 text-center font-semibold ${(p.ppap ?? 0) >= 1 ? "text-green-700" : "text-red-600"}`}>
+                      {p.ppap !== null ? p.ppap.toFixed(2) : "—"}
+                    </td>
+                    <td className="px-2 py-2 text-center">
+                      <span className={`rounded-full px-1.5 py-0.5 text-xs font-medium ${
+                        p.inventoryStatus === "IN_STOCK" ? "bg-green-100 text-green-700" :
+                        p.inventoryStatus === "LOW_STOCK" ? "bg-amber-100 text-amber-700" :
+                        p.inventoryStatus === "OUT_OF_STOCK" ? "bg-red-100 text-red-700" :
+                        "bg-gray-200 text-gray-600"
+                      }`}>{p.stockAvailable}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="px-3 py-2 border-t border-gray-50 text-xs text-gray-400">
+            All values computed by Formula Engine (TRUE-001, MKT-002, MKT-012, MKT-013) · <Link href="/en/dashboard/products" className="text-indigo-500 underline">Full product intelligence →</Link>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Quick Navigation ─────────────────────────────────────────────── */}
+      <div className="flex flex-wrap gap-2">
+        {[
+          { href: "/en/dashboard/finance",     label: "💰 Finance" },
+          { href: "/en/dashboard/marketing",   label: "📣 Marketing" },
+          { href: "/en/dashboard/shipping",    label: "🚚 Shipping" },
+          { href: "/en/dashboard/inventory",   label: "📦 Inventory" },
+          { href: "/en/dashboard/products",    label: "🏷 Products" },
+          { href: "/en/dashboard/decision-center", label: "🎯 Decisions" },
+          { href: "/en/dashboard/formula-inspector", label: "ƒ Formulas" },
+        ].map(l => (
+          <Link key={l.href} href={l.href}
+            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-600 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700 transition-colors">
+            {l.label}
+          </Link>
+        ))}
       </div>
 
       {/* ── Scores grid (SCORE-001 to SCORE-009) ─────────────────── */}
