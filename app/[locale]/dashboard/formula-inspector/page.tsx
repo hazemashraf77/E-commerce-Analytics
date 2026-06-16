@@ -12,11 +12,12 @@ import { FormulaInspectorFull } from "@/components/formula-inspector/FormulaInsp
 import { cn } from "@/lib/utils";
 
 const QUICK_LINKS = [
-  { group: "Formulas (FIN)", ids: ["FIN-001", "FIN-002", "FIN-003", "FIN-004", "SHIP-001"] },
-  { group: "Formulas (OPS)", ids: ["INV-001", "OPS-001", "OPS-002", "OPS-003", "MKT-002", "MKT-003"] },
-  { group: "KPIs",           ids: ["KPI-FIN-001", "KPI-FIN-002", "KPI-FIN-003", "KPI-OPS-001", "KPI-OPS-002", "KPI-MKT-002"] },
-  { group: "Scores (054)",   ids: ["SCORE-001", "SCORE-002", "SCORE-003", "SCORE-004", "SCORE-005", "SCORE-006", "SCORE-007", "SCORE-008", "SCORE-009"] },
-  { group: "Decisions (055)",ids: ["DEC-001", "DEC-002", "DEC-003", "DEC-004", "DEC-005", "DEC-006", "DEC-007", "DEC-008", "DEC-009", "DEC-010"] },
+  { group: "Financial (FIN)", ids: ["FIN-001", "FIN-002", "FIN-003", "FIN-004", "TRUE-001", "MARG-001", "SHIP-001"] },
+  { group: "Inventory (INV)", ids: ["INV-001", "INV-002", "INV-003", "INV-004", "INV-005"] },
+  { group: "Marketing (MKT)", ids: ["MKT-002", "MKT-003", "MKT-004", "MKT-005", "MKT-006", "MKT-010", "MKT-011", "MKT-012", "MKT-013"] },
+  { group: "Shipping (SHP)",  ids: ["SHP-001", "SHP-002", "SHP-003", "SHP-004", "SHP-005"] },
+  { group: "Scores (054)",    ids: ["SCORE-001", "SCORE-002", "SCORE-003", "SCORE-004", "SCORE-005", "SCORE-006", "SCORE-007", "SCORE-008", "SCORE-009"] },
+  { group: "Decisions (055)", ids: ["DEC-001", "DEC-002", "DEC-003", "DEC-004", "DEC-005", "DEC-006", "DEC-007", "DEC-008", "DEC-009", "DEC-010"] },
 ];
 
 export default function FormulaInspectorPage() {
