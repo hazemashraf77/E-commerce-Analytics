@@ -56,6 +56,7 @@ const NAV: NavGroup[] = [
     items: [
       { href: "/en/dashboard/decision-center", label: "Decision Center", icon: "🎯" },
       { href: "/en/dashboard/formula-inspector", label: "Formula Inspector", icon: "ƒ" },
+      { href: "/en/dashboard/formula-settings", label: "Formula Settings", icon: "⚙" },
       { href: "/en/dashboard/ai-copilot", label: "AI Copilot",       icon: "🤖" },
     ],
   },

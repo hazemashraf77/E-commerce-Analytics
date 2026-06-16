@@ -1,8 +1,34 @@
 {
-  "Bootstrap": {
-    "title": "E-Commerce Analytics Platform",
-    "subtitle": "Foundation initialized. Repository-driven implementation in progress.",
-    "status": "Sprint 0 — Bootstrap",
-    "language": "Language"
-  }
+  "nav": {
+    "executive": "Executive", "finance": "Finance", "marketing": "Marketing",
+    "shipping": "Shipping", "inventory": "Inventory", "orders": "Orders",
+    "orderLookup": "Order Lookup", "products": "Products",
+    "decisionCenter": "Decision Center", "formulaInspector": "Formula Inspector",
+    "formulaSettings": "Formula Settings", "aiCopilot": "AI Copilot", "reports": "Reports"
+  },
+  "dashboard": {
+    "title": "Command Center", "syncNow": "Sync Now", "lastSync": "Last sync",
+    "revenue": "Revenue", "trueProfit": "True Profit", "expectedCash": "Expected Cash",
+    "pendingSettlement": "Pending Settlement", "deliveryRate": "Delivery Rate",
+    "trueCpa": "True CPA", "trueRoas": "True ROAS", "businessHealth": "Business Health",
+    "biggestRisk": "Biggest Risk", "biggestOpportunity": "Biggest Opportunity",
+    "todayAction": "Today's Action", "productIntelligence": "Product Intelligence",
+    "overview": "Overview", "lifecycle": "Lifecycle", "revenue2": "Revenue",
+    "costs": "Costs", "profit": "Profit", "marketing": "Marketing",
+    "shipping": "Shipping", "inventory": "Inventory", "cash": "Cash", "ai": "AI",
+    "product": "Product", "delivered": "Delivered", "returned": "Returned",
+    "refused": "Refused", "totalCost": "Total Cost", "margin": "Margin",
+    "health": "Health", "alert": "Alert", "stock": "Stock", "days": "Days"
+  },
+  "formulaSettings": {
+    "title": "Formula Settings", "categories": "Categories",
+    "financial": "Financial", "marketing": "Marketing", "shipping": "Shipping",
+    "inventory": "Inventory", "cash": "Cash", "custom": "Custom",
+    "save": "Save", "discard": "Discard", "reset": "Reset to Default",
+    "test": "Test Formula", "history": "View History",
+    "preview": "Live Preview", "components": "Components",
+    "dependencies": "Dependencies", "affectedKpis": "Affected KPIs",
+    "version": "Version"
+  },
+  "sources": { "easyOrders": "EasyOrders", "bosta": "Bosta", "meta": "Meta", "tiktok": "TikTok" }
 }

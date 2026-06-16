@@ -1,8 +1,34 @@
 {
-  "Bootstrap": {
-    "title": "منصة تحليلات التجارة الإلكترونية",
-    "subtitle": "تم تهيئة الأساس. التنفيذ يتم وفق مستندات المستودع.",
-    "status": "سبرنت ٠ — التهيئة",
-    "language": "اللغة"
-  }
+  "nav": {
+    "executive": "لوحة القيادة", "finance": "المالية", "marketing": "التسويق",
+    "shipping": "الشحن", "inventory": "المخزون", "orders": "الطلبات",
+    "orderLookup": "بحث الطلبات", "products": "المنتجات",
+    "decisionCenter": "مركز القرارات", "formulaInspector": "فحص المعادلات",
+    "formulaSettings": "إعدادات المعادلات", "aiCopilot": "المساعد الذكي", "reports": "التقارير"
+  },
+  "dashboard": {
+    "title": "مركز القيادة", "syncNow": "مزامنة الآن", "lastSync": "آخر مزامنة",
+    "revenue": "الإيرادات", "trueProfit": "الربح الحقيقي", "expectedCash": "النقد المتوقع",
+    "pendingSettlement": "التسوية المعلقة", "deliveryRate": "معدل التسليم",
+    "trueCpa": "التكلفة الحقيقية", "trueRoas": "العائد الحقيقي", "businessHealth": "صحة الأعمال",
+    "biggestRisk": "أكبر خطر", "biggestOpportunity": "أكبر فرصة",
+    "todayAction": "إجراء اليوم", "productIntelligence": "ذكاء المنتجات",
+    "overview": "نظرة عامة", "lifecycle": "دورة الحياة", "revenue2": "الإيرادات",
+    "costs": "التكاليف", "profit": "الربح", "marketing": "التسويق",
+    "shipping": "الشحن", "inventory": "المخزون", "cash": "النقد", "ai": "الذكاء",
+    "product": "المنتج", "delivered": "مُسلَّم", "returned": "مُرجَع",
+    "refused": "مرفوض", "totalCost": "إجمالي التكلفة", "margin": "الهامش",
+    "health": "الصحة", "alert": "تنبيه", "stock": "المخزون", "days": "أيام"
+  },
+  "formulaSettings": {
+    "title": "إعدادات المعادلات", "categories": "الفئات",
+    "financial": "مالية", "marketing": "تسويق", "shipping": "شحن",
+    "inventory": "مخزون", "cash": "نقد", "custom": "مخصص",
+    "save": "حفظ", "discard": "تجاهل", "reset": "إعادة تعيين",
+    "test": "اختبار المعادلة", "history": "سجل الإصدارات",
+    "preview": "معاينة مباشرة", "components": "المكونات",
+    "dependencies": "التبعيات", "affectedKpis": "المؤشرات المتأثرة",
+    "version": "الإصدار"
+  },
+  "sources": { "easyOrders": "إيزي أوردر", "bosta": "بوسطة", "meta": "ميتا", "tiktok": "تيك توك" }
 }
