@@ -3,7 +3,7 @@
   "installCommand": "npm install --legacy-peer-deps",
 
   "regions": ["cdg1"],
-
+  
   "crons": [
     {
       "path": "/api/cron/sync",
