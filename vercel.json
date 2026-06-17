@@ -4,6 +4,8 @@
 
   "regions": ["cdg1"],
   
+
+  
   "crons": [
     {
       "path": "/api/cron/sync",
