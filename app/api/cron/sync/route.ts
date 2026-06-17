@@ -5,8 +5,7 @@
  * Vercel Cron config in vercel.json:
  * {
  *   "crons": [
- *     { "path": "/api/cron/sync", "schedule": "*/15 * * * *" }
- *   ]
+*     { "path": "/api/cron/sync", "schedule": "every 15 minutes" } *   ]
  * }
  *
  * Security: validates Authorization header matches CRON_SECRET.
