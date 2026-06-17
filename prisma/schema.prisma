@@ -199,6 +199,8 @@ model Store {
   dailySnapshots   DailySnapshot[]
   settings         Setting[]
   syncJobs         SyncJob[]
+  integrationSettings IntegrationSetting[]
+  syncStates          SyncState[]
 
   @@map("stores")
 }
@@ -848,4 +850,56 @@ model ImportStaging {
   @@index([externalId])
   @@index([status])
   @@map("import_staging")
+}
+
+// ── Webhook event log — idempotent, never re-process the same event ───────
+model WebhookLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  provider    String                               // EAZY_ORDER | BOSTA
+  eventType   String                               // order.created, shipment.updated …
+  externalId  String                               // provider event ID for dedup
+  payload     Json                                 // raw payload stored verbatim
+  status      String   @default("RECEIVED")        // RECEIVED | PROCESSED | IGNORED | FAILED
+  errorMessage String?
+  processedAt DateTime?
+  receivedAt  DateTime @default(now())
+
+  @@unique([provider, externalId])
+  @@index([provider, status])
+  @@index([receivedAt])
+  @@map("webhook_logs")
+}
+
+// ── Integration settings — encrypted at rest by Supabase, read at runtime ─
+model IntegrationSetting {
+  id         String   @id @default(uuid()) @db.Uuid
+  storeId    String   @db.Uuid
+  provider   String                               // EAZY_ORDER | BOSTA
+  key        String                               // e.g. api_token, webhook_secret
+  value      String                               // stored value (never returned in API)
+  updatedAt  DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id])
+
+  @@unique([storeId, provider, key])
+  @@index([storeId, provider])
+  @@map("integration_settings")
+}
+
+// ── Sync state — cursor tracking for incremental syncs ────────────────────
+model SyncState {
+  id          String   @id @default(uuid()) @db.Uuid
+  storeId     String   @db.Uuid
+  provider    String
+  scope       String                              // orders | shipments | settlements
+  lastSyncAt  DateTime?
+  lastCursor  String?                             // pagination cursor or last-modified timestamp
+  status      String   @default("IDLE")           // IDLE | RUNNING | FAILED
+  updatedAt   DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id])
+
+  @@unique([storeId, provider, scope])
+  @@index([storeId, provider])
+  @@map("sync_state")
 }

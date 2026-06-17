@@ -11,4 +11,10 @@
     "NEXT_PUBLIC_APP_URL": "https://your-deployment.vercel.app",
     "NODE_ENV": "production"
   }
+  "crons": [
+    {
+      "path": "/api/cron/sync",
+      "schedule": "*/15 * * * *"
+    }
+  ]
 }
