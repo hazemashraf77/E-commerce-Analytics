@@ -94,9 +94,12 @@ export function HomepageTopBar({ state, t, isRtl, onLocaleSwitch, onPeriod, onCu
           {syncStatus === "syncing" && (
             <span className="text-xs text-indigo-600 animate-pulse">Syncing…</span>
           )}
-          <button onClick={onSync}
-            className="rounded-lg bg-gray-900 text-white px-3 py-1 text-xs font-semibold hover:bg-gray-700 shrink-0">
-            {t.syncNow}
+          <button
+            onClick={onSync}
+            disabled={syncStatus === "syncing"}
+            aria-busy={syncStatus === "syncing"}
+            className="rounded-lg bg-gray-900 text-white px-3 py-1 text-xs font-semibold hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed shrink-0">
+            {syncStatus === "syncing" ? "…" : t.syncNow}
           </button>
         </div>
       </div>

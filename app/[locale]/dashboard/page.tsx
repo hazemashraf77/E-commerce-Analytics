@@ -50,11 +50,41 @@ export default function DashboardPage() {
   const [dimMode,      setDimMode]      = useState<DimMode>("total");
   const [search,       setSearch]       = useState("");
   const [syncStatus,   setSyncStatus]   = useState<"ok"|"failed"|"syncing">("ok");
+  const [syncResult,   setSyncResult]   = useState<string | null>(null);
   const [adjOpen,      setAdjOpen]      = useState(false);
 
-  function handleSync() {
+  async function handleSync() {
     setSyncStatus("syncing");
-    setTimeout(() => setSyncStatus("ok"), 2000);
+    setSyncResult(null);
+    try {
+      const res = await fetch("/api/sync/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providers: ["EASYORDERS", "BOSTA", "META", "TIKTOK"], mode: "manual" }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        setSyncStatus("ok");
+        // Build compact result string
+        const parts: string[] = (json.data?.providers ?? []).map((p: any) => {
+          const icon = p.status === "success" ? "✓"
+            : p.status.startsWith("skipped") ? "—"
+            : "✗";
+          return `${icon} ${p.provider} (${p.recordsUpserted})`;
+        });
+        setSyncResult(parts.join(" · "));
+        // Clear after 8 seconds
+        setTimeout(() => setSyncResult(null), 8000);
+      } else {
+        setSyncStatus("failed");
+        setSyncResult(json.error ?? "Sync failed");
+        setTimeout(() => { setSyncStatus("ok"); setSyncResult(null); }, 8000);
+      }
+    } catch (err) {
+      setSyncStatus("failed");
+      setSyncResult("Network error — check connection");
+      setTimeout(() => { setSyncStatus("ok"); setSyncResult(null); }, 8000);
+    }
   }
 
   const topDecision = MOCK_DECISIONS[0]!;
@@ -86,6 +116,13 @@ export default function DashboardPage() {
         onSync={handleSync}
         syncStatus={syncStatus}
       />
+
+      {/* Sync result toast */}
+      {syncResult && (
+        <div className={`fixed bottom-4 right-4 z-50 rounded-xl px-4 py-3 text-sm font-medium shadow-lg border ${syncStatus === "failed" ? "bg-red-50 border-red-200 text-red-700" : "bg-green-50 border-green-200 text-green-700"}`}>
+          {syncResult}
+        </div>
+      )}
 
       {/* Executive KPI strip */}
       <ExecutiveSummary
