@@ -142,7 +142,7 @@ export async function syncEasyOrders(
 
       logger.info("EasyOrders: fetching page", { metadata: { page, perPage, updatedAfter } });
 
-      const requestUrl = `${baseUrl}/api/v1/orders?${qs.toString()}`;
+      const requestUrl = `${baseUrl}/api/v1/external-apps/orders?${qs.toString()}`;
 
 logger.info("EasyOrders: request URL", {
   metadata: {
