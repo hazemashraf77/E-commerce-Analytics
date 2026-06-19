@@ -78,17 +78,28 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   if (secret) {
     const signature = (
-      request.headers.get("x-easyorders-signature") ??
-      request.headers.get("x-webhook-signature") ??
-      ""
-    ).trim();
+  request.headers.get("x-easyorders-signature") ??
+  request.headers.get("x-easy-orders-signature") ??
+  request.headers.get("x-webhook-signature") ??
+  request.headers.get("x-hub-signature-256") ??
+  request.headers.get("x-signature") ??
+  request.headers.get("signature") ??
+  request.headers.get("webhook-signature") ??
+  request.headers.get("webhook-secret") ??
+  request.headers.get("x-webhook-secret") ??
+  ""
+).trim();
 
     if (!signature) {
-      logger.warn("EasyOrders webhook: missing signature header", {
-        metadata: { eventType },
-      });
-      return NextResponse.json({ error: "Missing signature" }, { status: 401 });
-    }
+  const headerNames: string[] = [];
+  request.headers.forEach((_value, key) => headerNames.push(key));
+
+  logger.warn("EasyOrders webhook: missing signature header", {
+    metadata: { eventType, headerNames },
+  });
+
+  return NextResponse.json({ error: "Missing signature" }, { status: 401 });
+}
 
     const hmacHex = createHmac("sha256", secret)
       .update(rawBody, "utf8")
@@ -96,7 +107,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // Accept both plain-hex and sha256=<hex> formats
     const sigBuf = Buffer.from(signature, "utf8");
-    const valid  = [`sha256=${hmacHex}`, hmacHex].some((candidate) => {
+    const valid = [`sha256=${hmacHex}`, hmacHex, secret].some((candidate) => {
       const buf = Buffer.from(candidate, "utf8");
       return buf.length === sigBuf.length && timingSafeEqual(buf, sigBuf);
     });
