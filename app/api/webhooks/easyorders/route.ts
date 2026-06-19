@@ -78,6 +78,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   if (secret) {
     const signature = (
+  request.headers.get("secret") ??
   request.headers.get("x-easyorders-signature") ??
   request.headers.get("x-easy-orders-signature") ??
   request.headers.get("x-webhook-signature") ??
@@ -100,7 +101,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   return NextResponse.json({ error: "Missing signature" }, { status: 401 });
 }
-
+logger.info("EasyOrders webhook: signature received", {
+  metadata: {
+    eventType,
+    signaturePrefix: signature.substring(0, 20),
+    signatureLength: signature.length,
+  },
+});
     const hmacHex = createHmac("sha256", secret)
       .update(rawBody, "utf8")
       .digest("hex");
