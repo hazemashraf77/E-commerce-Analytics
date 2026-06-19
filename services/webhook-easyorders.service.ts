@@ -152,31 +152,59 @@ function extractOrderId(payload: Record<string, unknown>): string {
       : undefined;
 
   const possible = [
+    // top-level direct fields
     payload.order_id,
     payload.orderId,
     payload.order_uuid,
     payload.orderUuid,
+    payload.uuid,
+
+    // EasyOrders sometimes sends the order id directly in generic fields
+    payload.id,
+    payload.order,
+    payload.entity_id,
+    payload.entityId,
+    payload.resource_id,
+    payload.resourceId,
+    payload.object_id,
+    payload.objectId,
+    payload.model_id,
+    payload.modelId,
     payload.reference_id,
     payload.referenceId,
 
+    // data object fields
     data?.order_id,
     data?.orderId,
     data?.order_uuid,
     data?.orderUuid,
-    data?.id,
     data?.uuid,
+    data?.id,
+    data?.order,
+    data?.entity_id,
+    data?.entityId,
+    data?.resource_id,
+    data?.resourceId,
+    data?.object_id,
+    data?.objectId,
+    data?.model_id,
+    data?.modelId,
     data?.reference_id,
     data?.referenceId,
 
+    // order object fields
     order?.id,
     order?.uuid,
     order?.order_id,
     order?.orderId,
 
+    // status object fields
     status?.order_id,
     status?.orderId,
     status?.order_uuid,
     status?.orderUuid,
+    status?.uuid,
+    status?.id,
   ];
 
   const found = possible.find(v => typeof v === "string" && v.trim());
