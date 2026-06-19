@@ -136,15 +136,51 @@ export interface WebhookHandleResult {
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function extractOrderId(payload: Record<string, unknown>): string {
-  const data  = payload.data  as Record<string, unknown> | undefined;
-  const order = payload.order as Record<string, unknown> | undefined;
-  return String(
-    payload.order_id ??
-    data?.id ??
-    data?.order_id ??
-    order?.id ??
-    "",
-  ).trim();
+  const data =
+    payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
+      ? payload.data as Record<string, unknown>
+      : undefined;
+
+  const order =
+    payload.order && typeof payload.order === "object" && !Array.isArray(payload.order)
+      ? payload.order as Record<string, unknown>
+      : undefined;
+
+  const status =
+    payload.status && typeof payload.status === "object" && !Array.isArray(payload.status)
+      ? payload.status as Record<string, unknown>
+      : undefined;
+
+  const possible = [
+    payload.order_id,
+    payload.orderId,
+    payload.order_uuid,
+    payload.orderUuid,
+    payload.reference_id,
+    payload.referenceId,
+
+    data?.order_id,
+    data?.orderId,
+    data?.order_uuid,
+    data?.orderUuid,
+    data?.id,
+    data?.uuid,
+    data?.reference_id,
+    data?.referenceId,
+
+    order?.id,
+    order?.uuid,
+    order?.order_id,
+    order?.orderId,
+
+    status?.order_id,
+    status?.orderId,
+    status?.order_uuid,
+    status?.orderUuid,
+  ];
+
+  const found = possible.find(v => typeof v === "string" && v.trim());
+  return found ? String(found).trim() : "";
 }
 
 function buildExternalId(
@@ -154,8 +190,11 @@ function buildExternalId(
 ): string {
   const explicit = String(payload.event_id ?? payload.id ?? "").trim();
   if (explicit) return `eo:${explicit}`;
-  // Deterministic — same event always produces same key
-  return `eo:${orderId}:${eventType}`;
+
+  const timestamp = String(payload.updated_at ?? payload.created_at ?? payload.timestamp ?? "").trim();
+  if (orderId) return `eo:${orderId}:${eventType}:${timestamp || "latest"}`;
+
+  return `eo:unknown:${eventType}:${timestamp || Date.now()}`;
 }
 
 // ── Public API order fetch ─────────────────────────────────────────────────
@@ -406,7 +445,7 @@ export async function handleEasyOrdersWebhook(
 
   // ── Log ──────────────────────────────────────────────────────────────────
   const safeHeaders: Record<string, string> = {};
-  for (const h of ["content-type","x-easyorders-signature","x-webhook-signature","x-request-id","user-agent"]) {
+  for (const h of ["content-type","secret","x-webhook-secret","webhook-secret","x-request-id","user-agent"]) {
     if (rawHeaders[h]) safeHeaders[h] = rawHeaders[h];
   }
 
@@ -425,18 +464,36 @@ export async function handleEasyOrdersWebhook(
   });
 
   // ── Validate ─────────────────────────────────────────────────────────────
-  if (eventType === "unknown" || !orderId) {
-    logger.info("EasyOrders webhook: ignoring — unknown type or missing orderId", {
-      metadata: { eventType, orderId, externalId },
-    });
-    if (log) {
-      await prisma.webhookLog.update({
-        where: { id: log.id },
-        data:  { status: "IGNORED" },
-      }).catch(() => {});
-    }
-    return { outcome: "ignored", eventType, externalId };
+  if (eventType === "unknown") {
+  logger.info("EasyOrders webhook: ignoring — unknown event type", {
+    metadata: { eventType, orderId, externalId },
+  });
+  if (log) {
+    await prisma.webhookLog.update({
+      where: { id: log.id },
+      data: { status: "IGNORED", errorMessage: "Unknown event type" },
+    }).catch(() => {});
   }
+  return { outcome: "ignored", eventType, externalId };
+}
+
+if (!orderId) {
+  logger.warn("EasyOrders webhook: ignoring — missing orderId", {
+    metadata: { eventType, externalId },
+  });
+  if (log) {
+    await prisma.webhookLog.update({
+      where: { id: log.id },
+      data: { status: "IGNORED", errorMessage: "Missing orderId" },
+    }).catch(() => {});
+  }
+  return {
+    outcome: "ignored",
+    eventType,
+    externalId,
+    errorMessage: "Missing orderId",
+  };
+}
 
   // ── Store ────────────────────────────────────────────────────────────────
   const store = await prisma.store.findFirst({ select: { id: true } }).catch(() => null);
