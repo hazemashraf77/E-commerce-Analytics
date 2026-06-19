@@ -142,20 +142,20 @@ export async function syncEasyOrders(
 
       logger.info("EasyOrders: fetching page", { metadata: { page, perPage, updatedAfter } });
 
-      const requestUrl = `${baseUrl}/api/v1/external-apps/orders?${qs.toString()}`;
+      const requestUrl = `${baseUrl}/api/v1/orders?${qs.toString()}`;
 
-logger.info("EasyOrders: request URL", {
+      logger.info("EasyOrders Request", {
   metadata: {
-    url: requestUrl,
-    page,
-    perPage,
+    baseUrl,
+    requestUrl,
+    hasApiKey: Boolean(env.EAZY_ORDER_API_KEY),
   },
 });
 
 const res = await fetch(requestUrl, {
   headers: {
-    "Api-Key": env.EAZY_ORDER_API_KEY,
-    "Accept": "application/json",
+    Authorization: `Bearer ${env.EAZY_ORDER_API_KEY}`,
+    Accept: "application/json",
   },
   signal: AbortSignal.timeout(30_000),
 });
