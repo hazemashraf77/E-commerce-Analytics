@@ -2,139 +2,150 @@
  * POST /api/webhooks/bosta
  *
  * Receives shipment lifecycle events from Bosta.
- * Bosta sends a callback when shipment state changes.
  *
  * Register this URL in Bosta:
- *   Bosta Dashboard → Settings → Webhooks / Callbacks
- *   URL: https://yourdomain.vercel.app/api/webhooks/bosta
- *   Events: All shipment events
+ *   Dashboard → Settings → Webhooks / Callbacks
+ *   URL:    https://yourdomain.vercel.app/api/webhooks/bosta
+ *   Events: All (DELIVERY_STATUS_CHANGED and any other events)
+ *   Secret: set BOSTA_WEBHOOK_SECRET and paste the same value in Bosta dashboard
  *
- * Security: validates X-Bosta-Signature header (HMAC-SHA256 with BOSTA_WEBHOOK_SECRET)
- * Bosta also sometimes uses X-Hub-Signature-256 format.
+ * Security:
+ *   Verifies X-Bosta-Signature or X-Hub-Signature-256 header (HMAC-SHA256, sha256=<hex>).
+ *   If BOSTA_WEBHOOK_SECRET is unset, signature check is skipped.
+ *
+ * This route is intentionally thin:
+ *   1. Read raw body
+ *   2. Verify signature
+ *   3. Parse JSON
+ *   4. Delegate to BostaWebhookService
+ *   5. Return HTTP response
+ *
+ * No business logic here.
  */
 
 import { type NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
-import { prisma } from "@/lib/db/prisma";
 import { createLogger } from "@/lib/logger";
 import { getServerEnv } from "@/lib/env";
-import { syncSingleShipment } from "@/services/sync.service";
+import { handleBostaWebhook } from "@/services/webhook-bosta.service";
 
 const logger = createLogger("WebhookBosta");
 
-export const runtime = "nodejs";
+export const runtime     = "nodejs";
+export const maxDuration = 30;
 
-export async function POST(request: NextRequest) {
+export async function POST(request: NextRequest): Promise<NextResponse> {
+  // ── 1. Read raw body ─────────────────────────────────────────────────────
+  let rawBody: string;
+  try {
+    rawBody = await request.text();
+  } catch {
+    return NextResponse.json({ error: "Failed to read request body" }, { status: 400 });
+  }
+
+  // ── 2. Signature verification ────────────────────────────────────────────
   const env = getServerEnv();
-  const rawBody = await request.text();
 
-  // ── Signature verification ─────────────────────────────────────────────
-  const signature = request.headers.get("x-bosta-signature") ??
-                    request.headers.get("x-hub-signature-256") ??
-                    request.headers.get("x-webhook-signature") ?? "";
+  if (env.BOSTA_WEBHOOK_SECRET) {
+    const signature = (
+      request.headers.get("x-bosta-signature") ??
+      request.headers.get("x-hub-signature-256") ??
+      request.headers.get("x-webhook-signature") ??
+      ""
+    ).trim();
 
-  if (env.BOSTA_WEBHOOK_SECRET && signature) {
-    const expected = "sha256=" + createHmac("sha256", env.BOSTA_WEBHOOK_SECRET)
+    if (!signature) {
+      logger.warn("Bosta webhook: missing signature header");
+      return NextResponse.json({ error: "Missing signature" }, { status: 401 });
+    }
+
+    const hmacHex = createHmac("sha256", env.BOSTA_WEBHOOK_SECRET)
       .update(rawBody, "utf8")
       .digest("hex");
-    const expectedBuf = Buffer.from(expected, "utf8");
-    const signatureBuf = Buffer.from(signature, "utf8");
 
-    try {
-      const valid = expectedBuf.length === signatureBuf.length &&
-        timingSafeEqual(expectedBuf, signatureBuf);
-      if (!valid) {
-        logger.warn("Bosta webhook signature invalid", { metadata: { signature: signature.slice(0, 30) } });
-        return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
-      }
-    } catch {
+    // Bosta sends sha256=<hex> format
+    const expected    = `sha256=${hmacHex}`;
+    const expectedBuf = Buffer.from(expected, "utf8");
+    const sigBuf      = Buffer.from(signature, "utf8");
+
+    // Also accept plain hex in case Bosta format changes
+    const plainBuf  = Buffer.from(hmacHex, "utf8");
+    const plainSig  = Buffer.from(signature.replace(/^sha256=/, ""), "utf8");
+
+    const valid =
+      (expectedBuf.length === sigBuf.length && timingSafeEqual(expectedBuf, sigBuf)) ||
+      (plainBuf.length === plainSig.length && timingSafeEqual(plainBuf, plainSig));
+
+    if (!valid) {
+      logger.warn("Bosta webhook: invalid signature", {
+        metadata: { sigPrefix: signature.slice(0, 15) },
+      });
       return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
     }
   }
 
+  // ── 3. Parse JSON ────────────────────────────────────────────────────────
+  if (!rawBody.trim()) {
+    return NextResponse.json({ error: "Empty request body" }, { status: 400 });
+  }
+
   let payload: Record<string, unknown>;
   try {
-    payload = JSON.parse(rawBody);
+    payload = JSON.parse(rawBody) as Record<string, unknown>;
   } catch {
+    logger.warn("Bosta webhook: invalid JSON payload");
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  // Bosta webhook payload structure:
-  // { event: "DELIVERY_STATUS_CHANGED", data: { _id, trackingNumber, state, businessReference, ... } }
-  const eventType      = (payload.event ?? payload.type ?? "unknown") as string;
-  const eventId        = (payload.eventId ?? payload.id ?? crypto.randomUUID()) as string;
-  const data           = (payload.data ?? payload) as Record<string, unknown>;
-  const trackingNumber = (data.trackingNumber ?? data.tracking_number ?? data._id ?? "") as string;
-  const state          = data.state ?? data.status;
-
-  logger.info("Bosta webhook received", { metadata: { eventType, eventId, trackingNumber, state } });
-
-  // ── Idempotency ───────────────────────────────────────────────────────
-  const dedupeKey = eventId !== "unknown" ? eventId : `bosta:${trackingNumber}:${state}:${Date.now()}`;
-  const existing = await prisma.webhookLog.findUnique({
-    where: { provider_externalId: { provider: "BOSTA", externalId: dedupeKey } },
-  }).catch(() => null);
-
-  if (existing && eventId !== "unknown") {
-    logger.info("Bosta webhook duplicate — ignoring", { metadata: { dedupeKey } });
-    return NextResponse.json({ status: "duplicate" });
+  if (typeof payload !== "object" || Array.isArray(payload) || payload === null) {
+    return NextResponse.json({ error: "Payload must be a JSON object" }, { status: 400 });
   }
 
-  // ── Log event ─────────────────────────────────────────────────────────
-  const log = await prisma.webhookLog.create({
-    data: {
-      provider:   "BOSTA",
-      eventType,
-      externalId: dedupeKey,
-      payload:    payload as any,
-      status:     "RECEIVED",
-    },
-  }).catch(() => null);
+  // ── 4. Collect safe headers for logging ──────────────────────────────────
+  const rawHeaders: Record<string, string> = {};
+  request.headers.forEach((value, key) => {
+    rawHeaders[key.toLowerCase()] = value;
+  });
 
-  // ── Process event ─────────────────────────────────────────────────────
+  // ── 5. Delegate to service layer ─────────────────────────────────────────
   try {
-    const store = await prisma.store.findFirst({ select: { id: true } });
-    if (!store) {
-      return NextResponse.json({ status: "ignored", reason: "store_not_found" });
-    }
+    const result = await handleBostaWebhook(payload, rawHeaders);
 
-    if (!trackingNumber) {
-      if (log) await prisma.webhookLog.update({ where: { id: log.id }, data: { status: "IGNORED" } }).catch(() => {});
-      return NextResponse.json({ status: "ignored", reason: "no_tracking_number" });
-    }
-
-    // Process async — respond immediately
-    setImmediate(async () => {
-      try {
-        await syncSingleShipment(store.id, trackingNumber);
-        if (log) {
-          await prisma.webhookLog.update({
-            where: { id: log.id },
-            data: { status: "PROCESSED", processedAt: new Date() },
-          }).catch(() => {});
-        }
-      } catch (err) {
-        logger.error("Bosta webhook processing failed", {
-          metadata: { trackingNumber, error: String(err) },
+    switch (result.outcome) {
+      case "processed":
+        return NextResponse.json({
+          status: "accepted",
+          outcome: "processed",
+          eventType: result.eventType,
+          externalId: result.externalId,
+          trackingNumber: result.trackingNumber,
         });
-        if (log) {
-          await prisma.webhookLog.update({
-            where: { id: log.id },
-            data: { status: "FAILED", errorMessage: String(err) },
-          }).catch(() => {});
-        }
-      }
-    });
 
-    return NextResponse.json({ status: "accepted", trackingNumber });
-  } catch (err) {
-    logger.error("Bosta webhook error", { metadata: { error: String(err) } });
-    if (log) {
-      await prisma.webhookLog.update({
-        where: { id: log.id },
-        data: { status: "FAILED", errorMessage: String(err) },
-      }).catch(() => {});
+      case "duplicate":
+        return NextResponse.json({
+          status: "accepted",
+          outcome: "duplicate",
+          externalId: result.externalId,
+        });
+
+      case "ignored":
+        return NextResponse.json({
+          status: "accepted",
+          outcome: "ignored",
+          externalId: result.externalId,
+        });
+
+      case "failed":
+        return NextResponse.json(
+          { error: "Processing failed", details: result.errorMessage },
+          { status: 500 },
+        );
     }
-    return NextResponse.json({ error: "Processing failed" }, { status: 500 });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error("Bosta webhook: unexpected error in route", {
+      metadata: { error: message },
+    });
+    return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }
 }

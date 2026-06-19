@@ -859,7 +859,8 @@ model WebhookLog {
   eventType   String                               // order.created, shipment.updated …
   externalId  String                               // provider event ID for dedup
   payload     Json                                 // raw payload stored verbatim
-  status      String   @default("RECEIVED")        // RECEIVED | PROCESSED | IGNORED | FAILED
+  headers     Json?                                // selected request headers for debugging
+  status      String   @default("RECEIVED")        // RECEIVED | PROCESSED | IGNORED | FAILED | DUPLICATE
   errorMessage String?
   processedAt DateTime?
   receivedAt  DateTime @default(now())

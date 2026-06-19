@@ -20,9 +20,11 @@ const serverSchema = clientSchema.extend({
   APP_SECRET:                   z.string().default("preview-app-secret-minimum-32-chars!!"),
 
   // EasyOrders integration
-  EAZY_ORDER_API_KEY:           z.string().optional(),
-  EAZY_ORDER_STORE_URL:         z.string().optional(),   // e.g. https://yourstore.easyorders.com
-  EAZY_ORDER_WEBHOOK_SECRET:    z.string().optional(),
+  EAZY_ORDER_API_KEY:                    z.string().optional(),
+  EAZY_ORDER_STORE_URL:                  z.string().optional(),   // e.g. https://api.easy-orders.net
+  // Two separate webhook secrets — one per EasyOrders webhook type
+  EASYORDERS_ORDER_WEBHOOK_SECRET:       z.string().optional(),   // Order webhook secret
+  EASYORDERS_ORDER_STATUS_WEBHOOK_SECRET:z.string().optional(),   // Order Status Update webhook secret
 
   // Bosta integration
   BOSTA_API_KEY:                z.string().optional(),

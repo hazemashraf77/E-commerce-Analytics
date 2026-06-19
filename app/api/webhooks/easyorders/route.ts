@@ -1,153 +1,157 @@
 /**
  * POST /api/webhooks/easyorders
  *
- * Receives order lifecycle events from EasyOrders.
- * EasyOrders sends events to this URL when order status changes.
+ * Receives Order and Order Status Update events from EasyOrders.
+ * EasyOrders issues TWO different webhook secrets — one per event type.
  *
- * Register this URL in EasyOrders:
- *   Settings → Webhooks → Add Webhook
- *   URL: https://yourdomain.vercel.app/api/webhooks/easyorders
- *   Events: order.created, order.confirmed, order.shipped, order.delivered,
- *            order.cancelled, order.returned, order.status_changed
+ * Register in EasyOrders dashboard:
+ *   Order webhook:
+ *     URL:    https://yourdomain.vercel.app/api/webhooks/easyorders
+ *     Secret: <EASYORDERS_ORDER_WEBHOOK_SECRET>
+ *   Order Status Update webhook:
+ *     URL:    https://yourdomain.vercel.app/api/webhooks/easyorders
+ *     Secret: <EASYORDERS_ORDER_STATUS_WEBHOOK_SECRET>
  *
- * Security: validates X-EasyOrders-Signature (HMAC-SHA256 of payload with EAZY_ORDER_WEBHOOK_SECRET)
+ * Processing order:
+ *   1. Read raw body (must happen before any JSON parse — HMAC needs raw bytes)
+ *   2. Parse JSON to detect event type (needed to pick the right secret)
+ *   3. Verify HMAC against the secret for that event type
+ *   4. Delegate to EasyOrdersWebhookService
+ *   5. Return HTTP response
+ *
+ * No business logic here. Route stays thin.
  */
 
 import { type NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
-import { prisma } from "@/lib/db/prisma";
 import { createLogger } from "@/lib/logger";
 import { getServerEnv } from "@/lib/env";
-import { syncSingleOrder } from "@/services/sync.service";
+import {
+  handleEasyOrdersWebhook,
+  detectEventType,
+  isOrderEvent,
+} from "@/services/webhook-easyorders.service";
 
 const logger = createLogger("WebhookEasyOrders");
 
-export const runtime = "nodejs"; // Required for crypto
+export const runtime     = "nodejs"; // required for crypto
+export const maxDuration = 30;
 
-export async function POST(request: NextRequest) {
-  const env = getServerEnv();
-  const rawBody = await request.text();
-
-  // ── Signature verification ─────────────────────────────────────────────
-  const signature = request.headers.get("x-easyorders-signature") ??
-                    request.headers.get("x-webhook-signature") ?? "";
-
-  if (env.EAZY_ORDER_WEBHOOK_SECRET) {
-    const expected = createHmac("sha256", env.EAZY_ORDER_WEBHOOK_SECRET)
-      .update(rawBody, "utf8")
-      .digest("hex");
-    const expectedBuf = Buffer.from(`sha256=${expected}`, "utf8");
-    const signatureBuf = Buffer.from(signature, "utf8");
-
-    try {
-      const valid = expectedBuf.length === signatureBuf.length &&
-        timingSafeEqual(expectedBuf, signatureBuf);
-      if (!valid) {
-        logger.warn("EasyOrders webhook signature invalid", { metadata: { signature: signature.slice(0, 20) } });
-        return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
-      }
-    } catch {
-      logger.warn("EasyOrders webhook signature check failed");
-      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
-    }
+export async function POST(request: NextRequest): Promise<NextResponse> {
+  // ── 1. Read raw body ─────────────────────────────────────────────────────
+  // Must read before any JSON parse — HMAC is computed over raw bytes.
+  let rawBody: string;
+  try {
+    rawBody = await request.text();
+  } catch {
+    return NextResponse.json({ error: "Failed to read request body" }, { status: 400 });
   }
 
+  if (!rawBody.trim()) {
+    return NextResponse.json({ error: "Empty request body" }, { status: 400 });
+  }
+
+  // ── 2. Parse JSON to detect event type ───────────────────────────────────
+  // Event type must be known before we can pick the correct secret.
   let payload: Record<string, unknown>;
   try {
-    payload = JSON.parse(rawBody);
+    payload = JSON.parse(rawBody) as Record<string, unknown>;
   } catch {
+    logger.warn("EasyOrders webhook: invalid JSON");
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const eventType = (payload.event_type ?? payload.event ?? payload.type ?? "unknown") as string;
-  const eventId   = (payload.event_id ?? payload.id ?? crypto.randomUUID()) as string;
-  const orderId   = (payload.order_id ?? payload.data?.id ?? payload.order?.id ?? "") as string;
-  const storeId   = (payload.store_id ?? "") as string;
-
-  logger.info("EasyOrders webhook received", { metadata: { eventType, eventId, orderId } });
-
-  // ── Idempotency — ignore duplicate events ─────────────────────────────
-  const existing = await prisma.webhookLog.findUnique({
-    where: { provider_externalId: { provider: "EAZY_ORDER", externalId: eventId } },
-  }).catch(() => null);
-
-  if (existing) {
-    logger.info("EasyOrders webhook duplicate — ignoring", { metadata: { eventId } });
-    return NextResponse.json({ status: "duplicate", eventId });
+  if (typeof payload !== "object" || Array.isArray(payload) || payload === null) {
+    return NextResponse.json({ error: "Payload must be a JSON object" }, { status: 400 });
   }
 
-  // ── Log event ─────────────────────────────────────────────────────────
-  const log = await prisma.webhookLog.create({
-    data: {
-      provider:   "EAZY_ORDER",
-      eventType,
-      externalId: eventId,
-      payload:    payload as any,
-      status:     "RECEIVED",
-    },
-  }).catch(() => null);
+  const eventType = detectEventType(payload);
 
-  // ── Process event ─────────────────────────────────────────────────────
-  try {
-    const resolvedStoreId = await resolveStoreId(storeId);
-    if (!resolvedStoreId) {
-      logger.warn("EasyOrders webhook: store not found", { metadata: { storeId } });
-      return NextResponse.json({ status: "ignored", reason: "store_not_found" });
-    }
+  // ── 3. Signature verification with the correct secret ────────────────────
+  // Order events         → EASYORDERS_ORDER_WEBHOOK_SECRET
+  // Status update events → EASYORDERS_ORDER_STATUS_WEBHOOK_SECRET
+  const env = getServerEnv();
 
-    // Trigger incremental sync for this specific order
-    if (orderId) {
-      // Non-blocking — respond 200 immediately, process async
-      setImmediate(async () => {
-        try {
-          await syncSingleOrder(resolvedStoreId, orderId);
-          if (log) {
-            await prisma.webhookLog.update({
-              where: { id: log.id },
-              data: { status: "PROCESSED", processedAt: new Date() },
-            }).catch(() => {});
-          }
-        } catch (err) {
-          logger.error("EasyOrders webhook processing failed", { metadata: { eventId, orderId, error: String(err) } });
-          if (log) {
-            await prisma.webhookLog.update({
-              where: { id: log.id },
-              data: { status: "FAILED", errorMessage: String(err) },
-            }).catch(() => {});
-          }
-        }
+  const secret = isOrderEvent(eventType)
+    ? env.EASYORDERS_ORDER_WEBHOOK_SECRET
+    : env.EASYORDERS_ORDER_STATUS_WEBHOOK_SECRET;
+
+  if (secret) {
+    const signature = (
+      request.headers.get("x-easyorders-signature") ??
+      request.headers.get("x-webhook-signature") ??
+      ""
+    ).trim();
+
+    if (!signature) {
+      logger.warn("EasyOrders webhook: missing signature header", {
+        metadata: { eventType },
       });
-    } else {
-      if (log) {
-        await prisma.webhookLog.update({
-          where: { id: log.id },
-          data: { status: "IGNORED" },
-        }).catch(() => {});
-      }
+      return NextResponse.json({ error: "Missing signature" }, { status: 401 });
     }
 
-    return NextResponse.json({ status: "accepted", eventId });
+    const hmacHex = createHmac("sha256", secret)
+      .update(rawBody, "utf8")
+      .digest("hex");
+
+    // Accept both plain-hex and sha256=<hex> formats
+    const sigBuf = Buffer.from(signature, "utf8");
+    const valid  = [`sha256=${hmacHex}`, hmacHex].some((candidate) => {
+      const buf = Buffer.from(candidate, "utf8");
+      return buf.length === sigBuf.length && timingSafeEqual(buf, sigBuf);
+    });
+
+    if (!valid) {
+      logger.warn("EasyOrders webhook: invalid signature", {
+        metadata: { eventType, sigPrefix: signature.slice(0, 15) },
+      });
+      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+    }
+  } else {
+    // Secret not configured — log warning in production, proceed in development
+    logger.warn("EasyOrders webhook: secret not configured, skipping verification", {
+      metadata: { eventType, expectedEnvVar: isOrderEvent(eventType) ? "EASYORDERS_ORDER_WEBHOOK_SECRET" : "EASYORDERS_ORDER_STATUS_WEBHOOK_SECRET" },
+    });
+  }
+
+  // ── 4. Collect safe headers ───────────────────────────────────────────────
+  const rawHeaders: Record<string, string> = {};
+  request.headers.forEach((value, key) => { rawHeaders[key.toLowerCase()] = value; });
+
+  // ── 5. Delegate to service layer ──────────────────────────────────────────
+  try {
+    const result = await handleEasyOrdersWebhook(payload, rawHeaders, eventType);
+
+    switch (result.outcome) {
+      case "processed":
+        return NextResponse.json({
+          status: "accepted",
+          outcome: "processed",
+          eventType: result.eventType,
+          externalId: result.externalId,
+          orderId: result.orderId,
+        });
+      case "duplicate":
+        return NextResponse.json({
+          status: "accepted",
+          outcome: "duplicate",
+          externalId: result.externalId,
+        });
+      case "ignored":
+        return NextResponse.json({
+          status: "accepted",
+          outcome: "ignored",
+          externalId: result.externalId,
+        });
+      case "failed":
+        return NextResponse.json(
+          { error: "Processing failed", details: result.errorMessage },
+          { status: 500 },
+        );
+    }
   } catch (err) {
-    logger.error("EasyOrders webhook error", { metadata: { eventId, error: String(err) } });
-    if (log) {
-      await prisma.webhookLog.update({
-        where: { id: log.id },
-        data: { status: "FAILED", errorMessage: String(err) },
-      }).catch(() => {});
-    }
-    return NextResponse.json({ error: "Processing failed" }, { status: 500 });
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error("EasyOrders webhook: unexpected error", { metadata: { error: message } });
+    return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }
-}
-
-async function resolveStoreId(rawStoreId: string): Promise<string | null> {
-  if (!rawStoreId) {
-    // Fallback: get the first store (single-tenant deployments)
-    const store = await prisma.store.findFirst({ select: { id: true } });
-    return store?.id ?? null;
-  }
-  const store = await prisma.store.findFirst({
-    where: { id: rawStoreId },
-    select: { id: true },
-  });
-  return store?.id ?? null;
 }

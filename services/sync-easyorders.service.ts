@@ -106,7 +106,7 @@ export async function syncEasyOrders(
     };
   }
 
-  const baseUrl = (env.EAZY_ORDER_STORE_URL ?? "https://api.easy-orders.net").replace(/\/$/, "");
+  const baseUrl = (env.EAZY_ORDER_STORE_URL ?? "https://api.easyorders.io").replace(/\/$/, "");
 
   const store = await prisma.store.findFirst({ select: { id: true } }).catch(() => null);
   if (!store) {
@@ -142,23 +142,13 @@ export async function syncEasyOrders(
 
       logger.info("EasyOrders: fetching page", { metadata: { page, perPage, updatedAfter } });
 
-      const requestUrl = `${baseUrl}/api/v1/orders?${qs.toString()}`;
-
-      logger.info("EasyOrders Request", {
-  metadata: {
-    baseUrl,
-    requestUrl,
-    hasApiKey: Boolean(env.EAZY_ORDER_API_KEY),
-  },
-});
-
-const res = await fetch(requestUrl, {
-  headers: {
-    Authorization: `Bearer ${env.EAZY_ORDER_API_KEY}`,
-    Accept: "application/json",
-  },
-  signal: AbortSignal.timeout(30_000),
-});
+      const res = await fetch(`${baseUrl}/v2/orders?${qs.toString()}`, {
+        headers: {
+          "Authorization": `Bearer ${env.EAZY_ORDER_API_KEY}`,
+          "Accept":        "application/json",
+        },
+        signal: AbortSignal.timeout(30_000),
+      });
 
       if (!res.ok) {
         const text = await res.text();

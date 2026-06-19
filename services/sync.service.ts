@@ -125,7 +125,7 @@ async function syncEasyOrders(storeId: string, fullSync: boolean): Promise<SyncR
 
           // Upsert order (idempotent)
           await prisma.order.upsert({
-            where: { storeId_providerOrderId: { storeId, providerOrderId: order.providerOrderId } },
+            where: { storeId_provider_providerOrderId: { storeId, provider: "EAZY_ORDER", providerOrderId: order.providerOrderId } },
             update: {
               orderStatus:    order.orderStatus,
               paymentStatus:  order.paymentStatus,
@@ -147,7 +147,7 @@ async function syncEasyOrders(storeId: string, fullSync: boolean): Promise<SyncR
 
           // Upsert order items
           const dbOrder = await prisma.order.findUnique({
-            where: { storeId_providerOrderId: { storeId, providerOrderId: order.providerOrderId } },
+            where: { storeId_provider_providerOrderId: { storeId, provider: "EAZY_ORDER", providerOrderId: order.providerOrderId } },
             select: { id: true },
           });
 
@@ -445,7 +445,7 @@ export async function syncSingleOrder(storeId: string, providerOrderId: string):
     const { order, items } = mapEazyOrderToCanonical(rawOrder, storeId);
 
     await prisma.order.upsert({
-      where: { storeId_providerOrderId: { storeId, providerOrderId } },
+      where: { storeId_provider_providerOrderId: { storeId, provider: "EAZY_ORDER", providerOrderId } },
       update: { orderStatus: order.orderStatus, paymentStatus: order.paymentStatus, syncedAt: new Date() },
       create: {
         storeId, provider: "EAZY_ORDER", providerOrderId: order.providerOrderId,
