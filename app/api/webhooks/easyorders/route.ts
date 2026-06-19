@@ -13,9 +13,9 @@
  *     Secret: <EASYORDERS_ORDER_STATUS_WEBHOOK_SECRET>
  *
  * Processing order:
- *   1. Read raw body (must happen before any JSON parse — HMAC needs raw bytes)
- *   2. Parse JSON to detect event type (needed to pick the right secret)
- *   3. Verify HMAC against the secret for that event type
+ *   1. Read raw body
+ *   2. Parse JSON to detect event type
+ *   3. Verify EasyOrders shared secret from request header
  *   4. Delegate to EasyOrdersWebhookService
  *   5. Return HTTP response
  *
@@ -23,13 +23,12 @@
  */
 
 import { type NextRequest, NextResponse } from "next/server";
-import { createHmac, timingSafeEqual } from "crypto";
+import { timingSafeEqual } from "crypto";
 import { createLogger } from "@/lib/logger";
 import { getServerEnv } from "@/lib/env";
 import {
   handleEasyOrdersWebhook,
   detectEventType,
-  isOrderEvent,
 } from "@/services/webhook-easyorders.service";
 
 const logger = createLogger("WebhookEasyOrders");
@@ -67,70 +66,81 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const eventType = detectEventType(payload);
 
-  // ── 3. Signature verification with the correct secret ────────────────────
+  // ── 3. Verify EasyOrders shared secret ────────────────────
   // Order events         → EASYORDERS_ORDER_WEBHOOK_SECRET
   // Status update events → EASYORDERS_ORDER_STATUS_WEBHOOK_SECRET
   const env = getServerEnv();
 
-  const secret = isOrderEvent(eventType)
-    ? env.EASYORDERS_ORDER_WEBHOOK_SECRET
-    : env.EASYORDERS_ORDER_STATUS_WEBHOOK_SECRET;
+ const possibleSecrets = [
+  env.EASYORDERS_ORDER_WEBHOOK_SECRET,
+  env.EASYORDERS_ORDER_STATUS_WEBHOOK_SECRET,
+].filter(Boolean) as string[];
 
-  if (secret) {
-    const signature = (
-  request.headers.get("secret") ??
-  request.headers.get("x-easyorders-signature") ??
-  request.headers.get("x-easy-orders-signature") ??
-  request.headers.get("x-webhook-signature") ??
-  request.headers.get("x-hub-signature-256") ??
-  request.headers.get("x-signature") ??
-  request.headers.get("signature") ??
-  request.headers.get("webhook-signature") ??
-  request.headers.get("webhook-secret") ??
-  request.headers.get("x-webhook-secret") ??
-  ""
-).trim();
+if (possibleSecrets.length > 0) {
+  const receivedSecret = (
+    request.headers.get("secret") ??
+    request.headers.get("x-webhook-secret") ??
+    request.headers.get("webhook-secret") ??
+    ""
+  ).trim();
 
-    if (!signature) {
-  const headerNames: string[] = [];
-  request.headers.forEach((_value, key) => headerNames.push(key));
+  if (!receivedSecret) {
+    const headerNames: string[] = [];
+    request.headers.forEach((_value, key) => headerNames.push(key));
 
-  logger.warn("EasyOrders webhook: missing signature header", {
-    metadata: { eventType, headerNames },
+    logger.warn("EasyOrders webhook: missing secret header", {
+      metadata: { eventType, headerNames },
+    });
+
+    return NextResponse.json(
+      { error: "Missing webhook secret" },
+      { status: 401 },
+    );
+  }
+
+  logger.info("EasyOrders webhook: secret received", {
+    metadata: {
+      eventType,
+      secretPrefix: receivedSecret.substring(0, 12),
+      secretLength: receivedSecret.length,
+    },
   });
 
-  return NextResponse.json({ error: "Missing signature" }, { status: 401 });
-}
-logger.info("EasyOrders webhook: signature received", {
-  metadata: {
-    eventType,
-    signaturePrefix: signature.substring(0, 20),
-    signatureLength: signature.length,
-  },
-});
-    const hmacHex = createHmac("sha256", secret)
-      .update(rawBody, "utf8")
-      .digest("hex");
+  const receivedBuffer = Buffer.from(receivedSecret, "utf8");
 
-    // Accept both plain-hex and sha256=<hex> formats
-    const sigBuf = Buffer.from(signature, "utf8");
-    const valid = [`sha256=${hmacHex}`, hmacHex, secret].some((candidate) => {
-      const buf = Buffer.from(candidate, "utf8");
-      return buf.length === sigBuf.length && timingSafeEqual(buf, sigBuf);
+  const valid = possibleSecrets.some((candidate) => {
+    const expectedBuffer = Buffer.from(candidate, "utf8");
+
+    return (
+      expectedBuffer.length === receivedBuffer.length &&
+      timingSafeEqual(expectedBuffer, receivedBuffer)
+    );
+  });
+
+  if (!valid) {
+    logger.warn("EasyOrders webhook: invalid secret", {
+      metadata: {
+        eventType,
+        secretPrefix: receivedSecret.substring(0, 12),
+      },
     });
 
-    if (!valid) {
-      logger.warn("EasyOrders webhook: invalid signature", {
-        metadata: { eventType, sigPrefix: signature.slice(0, 15) },
-      });
-      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
-    }
-  } else {
-    // Secret not configured — log warning in production, proceed in development
-    logger.warn("EasyOrders webhook: secret not configured, skipping verification", {
-      metadata: { eventType, expectedEnvVar: isOrderEvent(eventType) ? "EASYORDERS_ORDER_WEBHOOK_SECRET" : "EASYORDERS_ORDER_STATUS_WEBHOOK_SECRET" },
-    });
+    return NextResponse.json(
+      { error: "Invalid webhook secret" },
+      { status: 401 },
+    );
   }
+} else {
+  logger.warn("EasyOrders webhook: no webhook secrets configured; verification skipped", {
+    metadata: {
+      eventType,
+      expectedEnvVars: [
+        "EASYORDERS_ORDER_WEBHOOK_SECRET",
+        "EASYORDERS_ORDER_STATUS_WEBHOOK_SECRET",
+      ],
+    },
+  });
+}
 
   // ── 4. Collect safe headers ───────────────────────────────────────────────
   const rawHeaders: Record<string, string> = {};
