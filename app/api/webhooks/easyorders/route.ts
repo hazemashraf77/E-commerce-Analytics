@@ -38,7 +38,7 @@ export const maxDuration = 30;
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   // ── 1. Read raw body ─────────────────────────────────────────────────────
-  // Must read before any JSON parse — HMAC is computed over raw bytes.
+  // Must read before JSON parsing.
   let rawBody: string;
   try {
     rawBody = await request.text();
