@@ -48,16 +48,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   if (env.BOSTA_WEBHOOK_SECRET) {
     const signature = (
-      request.headers.get("x-bosta-signature") ??
-      request.headers.get("x-hub-signature-256") ??
-      request.headers.get("x-webhook-signature") ??
-      ""
-    ).trim();
+  request.headers.get("x-bosta-signature") ??
+  request.headers.get("x-hub-signature-256") ??
+  request.headers.get("x-webhook-signature") ??
+  request.headers.get("signature") ??
+  request.headers.get("secret") ??
+  request.headers.get("authorization") ??
+  ""
+).trim();
 
     if (!signature) {
-      logger.warn("Bosta webhook: missing signature header");
-      return NextResponse.json({ error: "Missing signature" }, { status: 401 });
-    }
+  const headerNames: string[] = [];
+  request.headers.forEach((_value, key) => headerNames.push(key));
+
+  logger.warn("Bosta webhook: missing signature header", {
+    metadata: { headerNames },
+  });
+
+  return NextResponse.json({ error: "Missing signature" }, { status: 401 });
+}
 
     const hmacHex = createHmac("sha256", env.BOSTA_WEBHOOK_SECRET)
       .update(rawBody, "utf8")
