@@ -104,14 +104,16 @@ if (directSecret) {
     (expectedBuf.length === sigBuf.length && timingSafeEqual(expectedBuf, sigBuf)) ||
     (plainBuf.length === plainSig.length && timingSafeEqual(plainBuf, plainSig));
 
-  if (!valid) {
+    if (!valid) {
     logger.warn("Bosta webhook: invalid signature", {
       metadata: { sigPrefix: signature.slice(0, 15) },
     });
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 }
+}
 
+  // ── 3. Parse JSON ────────────────────────────────────────────────────────
   // ── 3. Parse JSON ────────────────────────────────────────────────────────
   if (!rawBody.trim()) {
     return NextResponse.json({ error: "Empty request body" }, { status: 400 });
