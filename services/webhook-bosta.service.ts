@@ -10,20 +10,21 @@
  *   data: {
  *     _id: "...",
  *     trackingNumber: "...",
- *     businessReference: "...",  // links to EasyOrders order ID
+ *     businessReference: "...",  // EasyOrders UUID for orders sent to Bosta
  *     state: { code: 60, value: "Delivered" },
  *     ...
  *   }
  * }
  *
- * Delegates data import to syncSingleShipment from sync.service.
+ * Processes Bosta webhook payload directly and upserts shipment only for orders that were actually sent to Bosta.
  * Processing is synchronous within the Vercel invocation.
  */
 
 import { prisma } from "@/lib/db/prisma";
 import { createLogger } from "@/lib/logger";
-import type { ShipmentStatus } from "@prisma/client";
 import { Decimal } from "@prisma/client/runtime/library";
+import { mapBostaStatus } from "@/services/bosta-status.mapper";
+
 
 const logger = createLogger("BostaWebhookService");
 
@@ -91,14 +92,9 @@ async function upsertShipmentFromWebhookPayload(
     "",
   ).trim();
 
-  const shipmentStatus: ShipmentStatus =
-    stateCode === 60 || stateValue.includes("delivered")
-      ? "DELIVERED"
-      : stateValue.includes("return")
-        ? "RETURNED"
-        : stateValue.includes("cancel")
-          ? "CANCELLED"
-          : "IN_TRANSIT";
+
+  const mappedStatus = mapBostaStatus(stateCode, stateValue);
+const shipmentStatus = mappedStatus.shipmentStatus;
 
   const order = businessReference
     ? await prisma.order.findFirst({
