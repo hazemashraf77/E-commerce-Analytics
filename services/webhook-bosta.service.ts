@@ -23,6 +23,7 @@
 import { prisma } from "@/lib/db/prisma";
 import { createLogger } from "@/lib/logger";
 import type { ShipmentStatus } from "@prisma/client";
+import { Decimal } from "@prisma/client/runtime/library";
 
 const logger = createLogger("BostaWebhookService");
 
@@ -117,26 +118,32 @@ async function upsertShipmentFromWebhookPayload(
     return "ORDER_NOT_FOUND";
   }
 
+const actualShippingCost = new Decimal(0);
+const codAmount = new Decimal(0);
+const now = new Date();
+
   await prisma.shipment.upsert({
-    where: {
-      orderId: order.id,
-    },
-    update: {
-      providerShipmentId: trackingNumber,
-      shipmentStatus,
-      deliveryDate: shipmentStatus === "DELIVERED" ? new Date() : undefined,
-      returnDate: shipmentStatus === "RETURNED" ? new Date() : undefined,
-      syncedAt: new Date(),
-    },
-    create: {
-      orderId: order.id,
-      providerShipmentId: trackingNumber,
-      shipmentStatus,
-      deliveryDate: shipmentStatus === "DELIVERED" ? new Date() : undefined,
-      returnDate: shipmentStatus === "RETURNED" ? new Date() : undefined,
-      syncedAt: new Date(),
-    },
-  });
+  where: {
+    orderId: order.id,
+  },
+  update: {
+    providerShipmentId: trackingNumber,
+    shipmentStatus,
+    deliveryDate: shipmentStatus === "DELIVERED" ? now : undefined,
+    returnDate: shipmentStatus === "RETURNED" ? now : undefined,
+    syncedAt: now,
+  },
+  create: {
+    orderId: order.id,
+    providerShipmentId: trackingNumber,
+    shipmentStatus,
+    deliveryDate: shipmentStatus === "DELIVERED" ? now : undefined,
+    returnDate: shipmentStatus === "RETURNED" ? now : undefined,
+    actualShippingCost,
+    codAmount,
+    syncedAt: now,
+  },
+});
 
   return "UPSERTED";
 }
@@ -206,21 +213,37 @@ if (existing?.status === "FAILED") {
     if (rawHeaders[h]) safeHeaders[h] = rawHeaders[h];
   }
 
-  const log = await prisma.webhookLog.create({
-    data: {
-      provider:   "BOSTA",
-      eventType,
-      externalId,
-      payload:    payload as object,
-      headers:    safeHeaders as object,
-      status:     "RECEIVED",
-    },
-  }).catch((err) => {
-    logger.error("Bosta webhook: failed to create log entry", {
-      metadata: { error: String(err) },
+  const log = existing
+  ? await prisma.webhookLog.update({
+      where: { id: existing.id },
+      data: {
+        payload: payload as object,
+        headers: safeHeaders as object,
+        status: "RECEIVED",
+        errorMessage: null,
+        processedAt: null,
+      },
+    }).catch((err) => {
+      logger.error("Bosta webhook: failed to reuse existing log entry", {
+        metadata: { error: String(err) },
+      });
+      return null;
+    })
+  : await prisma.webhookLog.create({
+      data: {
+        provider: "BOSTA",
+        eventType,
+        externalId,
+        payload: payload as object,
+        headers: safeHeaders as object,
+        status: "RECEIVED",
+      },
+    }).catch((err) => {
+      logger.error("Bosta webhook: failed to create log entry", {
+        metadata: { error: String(err) },
+      });
+      return null;
     });
-    return null;
-  });
 
   // ── Validate required fields ─────────────────────────────────────────────
   if (!trackingNumber) {
