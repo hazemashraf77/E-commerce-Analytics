@@ -47,51 +47,70 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const env = getServerEnv();
 
   if (env.BOSTA_WEBHOOK_SECRET) {
-    const signature = (
-  request.headers.get("x-bosta-signature") ??
-  request.headers.get("x-hub-signature-256") ??
-  request.headers.get("x-webhook-signature") ??
-  request.headers.get("signature") ??
+    const directSecret = (
   request.headers.get("secret") ??
-  request.headers.get("authorization") ??
+  request.headers.get("x-webhook-secret") ??
+  request.headers.get("webhook-secret") ??
   ""
 ).trim();
 
-    if (!signature) {
-  const headerNames: string[] = [];
-  request.headers.forEach((_value, key) => headerNames.push(key));
+if (directSecret) {
+  const expected = Buffer.from(env.BOSTA_WEBHOOK_SECRET, "utf8");
+  const received = Buffer.from(directSecret, "utf8");
 
-  logger.warn("Bosta webhook: missing signature header", {
-    metadata: { headerNames },
-  });
+  const valid =
+    expected.length === received.length &&
+    timingSafeEqual(expected, received);
 
-  return NextResponse.json({ error: "Missing signature" }, { status: 401 });
-}
-
-    const hmacHex = createHmac("sha256", env.BOSTA_WEBHOOK_SECRET)
-      .update(rawBody, "utf8")
-      .digest("hex");
-
-    // Bosta sends sha256=<hex> format
-    const expected    = `sha256=${hmacHex}`;
-    const expectedBuf = Buffer.from(expected, "utf8");
-    const sigBuf      = Buffer.from(signature, "utf8");
-
-    // Also accept plain hex in case Bosta format changes
-    const plainBuf  = Buffer.from(hmacHex, "utf8");
-    const plainSig  = Buffer.from(signature.replace(/^sha256=/, ""), "utf8");
-
-    const valid =
-      (expectedBuf.length === sigBuf.length && timingSafeEqual(expectedBuf, sigBuf)) ||
-      (plainBuf.length === plainSig.length && timingSafeEqual(plainBuf, plainSig));
-
-    if (!valid) {
-      logger.warn("Bosta webhook: invalid signature", {
-        metadata: { sigPrefix: signature.slice(0, 15) },
-      });
-      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
-    }
+  if (!valid) {
+    logger.warn("Bosta webhook: invalid direct secret", {
+      metadata: { secretPrefix: directSecret.slice(0, 8) },
+    });
+    return NextResponse.json({ error: "Invalid secret" }, { status: 401 });
   }
+} else {
+  const signature = (
+    request.headers.get("x-bosta-signature") ??
+    request.headers.get("x-hub-signature-256") ??
+    request.headers.get("x-webhook-signature") ??
+    request.headers.get("signature") ??
+    request.headers.get("authorization") ??
+    ""
+  ).trim();
+
+  if (!signature) {
+    const headerNames: string[] = [];
+    request.headers.forEach((_value, key) => headerNames.push(key));
+
+    logger.warn("Bosta webhook: missing signature/secret header", {
+      metadata: { headerNames },
+    });
+
+    return NextResponse.json({ error: "Missing signature" }, { status: 401 });
+  }
+
+  const hmacHex = createHmac("sha256", env.BOSTA_WEBHOOK_SECRET)
+    .update(rawBody, "utf8")
+    .digest("hex");
+
+  const expected = `sha256=${hmacHex}`;
+  const expectedBuf = Buffer.from(expected, "utf8");
+  const sigBuf = Buffer.from(signature, "utf8");
+
+  const plainBuf = Buffer.from(hmacHex, "utf8");
+  const plainSig = Buffer.from(signature.replace(/^sha256=/, ""), "utf8");
+
+  const valid =
+    (expectedBuf.length === sigBuf.length && timingSafeEqual(expectedBuf, sigBuf)) ||
+    (plainBuf.length === plainSig.length && timingSafeEqual(plainBuf, plainSig));
+
+  if (!valid) {
+    logger.warn("Bosta webhook: invalid signature", {
+      metadata: { sigPrefix: signature.slice(0, 15) },
+    });
+    return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+  }
+}
 
   // ── 3. Parse JSON ────────────────────────────────────────────────────────
   if (!rawBody.trim()) {
