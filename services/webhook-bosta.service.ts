@@ -22,7 +22,6 @@
 
 import { prisma } from "@/lib/db/prisma";
 import { createLogger } from "@/lib/logger";
-import { syncSingleShipment } from "@/services/sync.service";
 
 const logger = createLogger("BostaWebhookService");
 
@@ -69,6 +68,52 @@ function buildBostaExternalId(
  * Handle an incoming Bosta webhook event.
  * Processes synchronously before returning so Vercel doesn't terminate early.
  */
+async function upsertShipmentFromWebhookPayload(
+  storeId: string,
+  data: Record<string, unknown>,
+  trackingNumber: string,
+): Promise<void> {
+  const state =
+    data.state && typeof data.state === "object" && !Array.isArray(data.state)
+      ? data.state as Record<string, unknown>
+      : {};
+
+  const statusCode = String(state.code ?? data.stateCode ?? "").trim();
+  const statusName = String(state.value ?? data.stateValue ?? data.status ?? "").trim();
+
+  const businessReference = String(
+    data.businessReference ??
+    data.business_reference ??
+    data.orderReference ??
+    data.order_reference ??
+    ""
+  ).trim();
+
+  await prisma.shipment.upsert({
+    where: {
+      storeId_provider_trackingNumber: {
+        storeId,
+        provider: "BOSTA",
+        trackingNumber,
+      },
+    },
+    update: {
+      statusCode,
+      statusName,
+      businessReference: businessReference || null,
+      syncedAt: new Date(),
+    },
+    create: {
+      storeId,
+      provider: "BOSTA",
+      trackingNumber,
+      statusCode,
+      statusName,
+      businessReference: businessReference || null,
+      syncedAt: new Date(),
+    },
+  });
+}
 export async function handleBostaWebhook(
   payload: Record<string, unknown>,
   rawHeaders: Record<string, string>,
@@ -175,11 +220,11 @@ export async function handleBostaWebhook(
 
   // ── Process: sync the shipment ───────────────────────────────────────────
   try {
-    logger.info("Bosta webhook: syncing shipment", {
+    logger.info("Bosta webhook: upserting shipment from webhook payload", {
       metadata: { trackingNumber, externalId, eventType },
     });
 
-    await syncSingleShipment(store.id, trackingNumber);
+    await upsertShipmentFromWebhookPayload(store.id, data, trackingNumber);
 
     logger.info("Bosta webhook processed", {
       metadata: { trackingNumber, externalId },
