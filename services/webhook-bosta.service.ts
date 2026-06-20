@@ -22,6 +22,7 @@
 
 import { prisma } from "@/lib/db/prisma";
 import { createLogger } from "@/lib/logger";
+import type { ShipmentStatus } from "@prisma/client";
 
 const logger = createLogger("BostaWebhookService");
 
@@ -72,47 +73,72 @@ async function upsertShipmentFromWebhookPayload(
   storeId: string,
   data: Record<string, unknown>,
   trackingNumber: string,
-): Promise<void> {
+): Promise<"UPSERTED" | "ORDER_NOT_FOUND"> {
   const state =
     data.state && typeof data.state === "object" && !Array.isArray(data.state)
       ? data.state as Record<string, unknown>
       : {};
 
-  const statusCode = String(state.code ?? data.stateCode ?? "").trim();
-  const statusName = String(state.value ?? data.stateValue ?? data.status ?? "").trim();
+  const stateCode = Number(state.code ?? data.stateCode ?? 0);
+  const stateValue = String(state.value ?? data.stateValue ?? data.status ?? "").toLowerCase();
 
   const businessReference = String(
     data.businessReference ??
     data.business_reference ??
     data.orderReference ??
     data.order_reference ??
-    ""
+    "",
   ).trim();
+
+  const shipmentStatus: ShipmentStatus =
+    stateCode === 60 || stateValue.includes("delivered")
+      ? "DELIVERED"
+      : stateValue.includes("return")
+        ? "RETURNED"
+        : stateValue.includes("cancel")
+          ? "CANCELLED"
+          : "IN_TRANSIT";
+
+  const order = businessReference
+    ? await prisma.order.findFirst({
+        where: {
+          storeId,
+          provider: "EASYORDERS",
+          providerOrderId: businessReference,
+        },
+        select: { id: true },
+      })
+    : null;
+
+  if (!order) {
+    logger.warn("Bosta webhook: order not found for businessReference", {
+      metadata: { businessReference, trackingNumber },
+    });
+    return "ORDER_NOT_FOUND";
+  }
 
   await prisma.shipment.upsert({
     where: {
-      storeId_provider_trackingNumber: {
-        storeId,
-        provider: "BOSTA",
-        trackingNumber,
-      },
+      orderId: order.id,
     },
     update: {
-      statusCode,
-      statusName,
-      businessReference: businessReference || null,
+      providerShipmentId: trackingNumber,
+      shipmentStatus,
+      deliveryDate: shipmentStatus === "DELIVERED" ? new Date() : undefined,
+      returnDate: shipmentStatus === "RETURNED" ? new Date() : undefined,
       syncedAt: new Date(),
     },
     create: {
-      storeId,
-      provider: "BOSTA",
-      trackingNumber,
-      statusCode,
-      statusName,
-      businessReference: businessReference || null,
+      orderId: order.id,
+      providerShipmentId: trackingNumber,
+      shipmentStatus,
+      deliveryDate: shipmentStatus === "DELIVERED" ? new Date() : undefined,
+      returnDate: shipmentStatus === "RETURNED" ? new Date() : undefined,
       syncedAt: new Date(),
     },
   });
+
+  return "UPSERTED";
 }
 export async function handleBostaWebhook(
   payload: Record<string, unknown>,
@@ -230,7 +256,18 @@ if (existing?.status === "FAILED") {
       metadata: { trackingNumber, externalId, eventType },
     });
 
-    await upsertShipmentFromWebhookPayload(store.id, data, trackingNumber);
+    const shipmentResult = await upsertShipmentFromWebhookPayload(store.id, data, trackingNumber);
+
+if (shipmentResult === "ORDER_NOT_FOUND") {
+  if (log) {
+    await prisma.webhookLog.update({
+      where: { id: log.id },
+      data: { status: "IGNORED", errorMessage: "Order not found for Bosta businessReference" },
+    }).catch(() => {});
+  }
+
+  return { outcome: "ignored", eventType, externalId, trackingNumber };
+}
 
     logger.info("Bosta webhook processed", {
       metadata: { trackingNumber, externalId },
