@@ -152,17 +152,23 @@ export async function handleBostaWebhook(
     select: { id: true, status: true },
   }).catch(() => null);
 
-  if (existing) {
-    logger.info("Bosta webhook duplicate — ignoring", {
-      metadata: { externalId, previousStatus: existing.status },
-    });
-    return {
-      outcome: "duplicate",
-      eventType,
-      externalId,
-      trackingNumber: trackingNumber || undefined,
-    };
-  }
+  if (existing && existing.status !== "FAILED") {
+  logger.info("Bosta webhook duplicate — ignoring", {
+    metadata: { externalId, previousStatus: existing.status },
+  });
+  return {
+    outcome: "duplicate",
+    eventType,
+    externalId,
+    trackingNumber: trackingNumber || undefined,
+  };
+}
+
+if (existing?.status === "FAILED") {
+  logger.info("Bosta webhook retrying previously failed event", {
+    metadata: { externalId, previousStatus: existing.status },
+  });
+}
 
   // ── Log incoming event ───────────────────────────────────────────────────
   const safeHeaders: Record<string, string> = {};
