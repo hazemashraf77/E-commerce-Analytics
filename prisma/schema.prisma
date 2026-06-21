@@ -201,6 +201,8 @@ model Store {
   syncJobs         SyncJob[]
   integrationSettings IntegrationSetting[]
   syncStates          SyncState[]
+  providerOrderItems  ProviderOrderItem[]
+  aovGroupingConfig   AOVGroupingConfig?
 
   @@map("stores")
 }
@@ -253,8 +255,25 @@ model Product {
   sku                 String
   name                String
   category            String?
+  brand               String?
+  subcategory         String?
+  barcode             String?
   status              EntityStatus @default(ACTIVE)
   defaultSellingPrice Decimal      @db.Decimal(18, 4)    // (006: MONEY POLICY)
+  // Sprint 2A — cost profile (all optional; empty = 0)
+  unitProductCost     Decimal?     @db.Decimal(18, 4)    // unit cost; falls back to FIFO when null
+  packagingCost       Decimal      @db.Decimal(18, 4) @default(0)
+  imageUrl            String?                              // single product image URL (MVP)
+  minimumStockThreshold Int        @default(0)             // restock alert threshold
+  maximumStockThreshold Int?
+  reorderPoint          Int?
+  reorderQuantity       Int?
+  estimatedShippingCost Decimal? @db.Decimal(18, 4)
+  generalExpenseRate    Decimal? @db.Decimal(5, 4)
+  images                Json?
+  // Provider mapping (e.g. EasyOrders product_id → our productId)
+  // Stored as JSON for flexibility: { "EASYORDERS": "ext_abc", ... }
+  externalIds         Json?
   isDeleted           Boolean      @default(false)        // (006: SOFT DELETE)
   deletedAt           DateTime?
   deletedBy           String?      @db.Uuid
@@ -266,6 +285,8 @@ model Product {
   orderItems       OrderItem[]
   inventoryLayers  InventoryLayer[]
   inventoryMovements InventoryMovement[]
+  providerOrderItems ProviderOrderItem[]
+  inventoryState InventoryState?
 
   @@unique([storeId, sku])                               // (006: UNIQUE CONSTRAINT POLICY)
   @@index([storeId])
@@ -279,16 +300,26 @@ model ProductAlias {
   id         String       @id @default(uuid()) @db.Uuid
   productId  String       @db.Uuid
   aliasName  String
-  platform   MarketingPlatform
+  // Sprint 2A — aliases can now be marketing OR operational (EasyOrders)
+  // platform stays for marketing aliases (META/TIKTOK)
+  platform   MarketingPlatform?
+  // New: provider field for operational aliases (EASYORDERS, etc.)
+  provider   String?      // "EASYORDERS" | null when platform is set
+  aliasType  String       @default("name")  // "name" | "sku" | "provider_id"
+  source              String?
+  confidenceScore     Decimal? @db.Decimal(5, 4)
+  createdAutomatically Boolean @default(false)
   status     EntityStatus @default(ACTIVE)
   createdAt  DateTime     @default(now())
   updatedAt  DateTime     @updatedAt
 
   product Product @relation(fields: [productId], references: [id])
 
-  @@unique([productId, aliasName, platform])
+  @@unique([productId, aliasName, aliasType])
   @@index([productId])
   @@index([platform])
+  @@index([provider])
+  @@index([aliasName])
   @@map("product_aliases")
 }
 
@@ -326,6 +357,7 @@ model Order {
   costEvents     CostEvent[]
   profitEvents   ProfitEvent[]
   cashFlowEvents CashFlowEvent[]
+  providerOrderItems ProviderOrderItem[]
 
   @@unique([storeId, provider, providerOrderId])          // (006: UNIQUE CONSTRAINT POLICY)
   @@index([storeId])
@@ -471,6 +503,22 @@ model InventoryMovement {
   @@index([movementType])
   @@index([occurredAt])
   @@map("inventory_movements")
+}
+
+model InventoryState {
+  id                String   @id @default(uuid()) @db.Uuid
+  productId          String   @unique @db.Uuid
+  physicalQuantity   Decimal  @db.Decimal(18, 4) @default(0)
+  reservedQuantity   Decimal  @db.Decimal(18, 4) @default(0)
+  incomingQuantity   Decimal  @db.Decimal(18, 4) @default(0)
+  damagedQuantity    Decimal  @db.Decimal(18, 4) @default(0)
+  returnedQuantity   Decimal  @db.Decimal(18, 4) @default(0)
+  availableQuantity  Decimal  @db.Decimal(18, 4) @default(0)
+  updatedAt          DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id])
+
+  @@map("inventory_state")
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -903,4 +951,83 @@ model SyncState {
   @@unique([storeId, provider, scope])
   @@index([storeId, provider])
   @@map("sync_state")
+}
+
+// ── ProviderOrderItem (Sprint 2A) ──────────────────────────────────────────
+// Permanent table for every order item received from EasyOrders.
+// Replaces ImportStaging use for ORDER_ITEM entities.
+//
+// Lifecycle:
+//   1. Webhook/sync creates row with status=UNMAPPED (productId null)
+//   2. User maps via ProductAlias OR creates Product matching SKU
+//   3. Resolution job sets productId, status=MAPPED, mappedAt=now()
+//   4. OrderItem row is also created (mirror) for analytics queries
+model ProviderOrderItem {
+  id                String   @id @default(uuid()) @db.Uuid
+  storeId           String   @db.Uuid
+  provider          String                              // EASYORDERS
+  providerOrderId   String                              // EasyOrders order UUID (matches Order.providerOrderId)
+  orderId           String?  @db.Uuid                   // FK to Order once the order row exists
+  itemIndex         Int                                 // position in original payload (for stable identity)
+  providerProductId String?                             // EasyOrders product_id reference
+  sku               String?                             // SKU from provider payload
+  productName       String?                             // human-readable name from provider
+  quantity          Decimal  @db.Decimal(18, 4)
+  unitPrice         Decimal  @db.Decimal(18, 4)
+  discount          Decimal  @db.Decimal(18, 4) @default(0)
+  productId         String?  @db.Uuid                   // FK to Product once mapped
+  status            String   @default("UNMAPPED")       // UNMAPPED | MAPPED | IGNORED
+  matchedBy         String?
+  confidenceScore   Decimal? @db.Decimal(5, 4)
+  rawPayload        Json                                // original item payload
+  mappedAt          DateTime?
+  importedAt        DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  store   Store    @relation(fields: [storeId], references: [id])
+  product Product? @relation(fields: [productId], references: [id])
+  order   Order?   @relation(fields: [orderId], references: [id])
+
+  @@unique([provider, providerOrderId, itemIndex])      // idempotent re-import
+  @@index([storeId, status])
+  @@index([sku])
+  @@index([providerProductId])
+  @@index([productId])
+  @@index([providerOrderId])
+  @@map("provider_order_items")
+}
+
+// ── AOVGroupingConfig (Sprint 2A) ──────────────────────────────────────────
+// Per-store configuration for the AOV bucket grouping model.
+// upliftPercentage default = 0.25 (25%) — produces the "free shipping above X" recommendation.
+model AOVGroupingConfig {
+  id               String   @id @default(uuid()) @db.Uuid
+  storeId          String   @unique @db.Uuid
+  bucketStrategy   String   @default("AUTO")             // AUTO | QUARTILE | FIXED
+  upliftPercentage Decimal  @db.Decimal(5, 4) @default(0.25)  // 25 % uplift on dominant bucket avg
+  customBuckets    Json?                                  // for FIXED strategy: array of {label, min, max}
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id])
+
+  @@map("aov_grouping_config")
+}
+
+model KpiDefinition {
+  id           String   @id @default(uuid()) @db.Uuid
+  key          String   @unique
+  name         String
+  category     String
+  description  String?
+  formula      String
+  dependencies Json?
+  version      Int      @default(1)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([category])
+  @@index([isActive])
+  @@map("kpi_definitions")
 }
