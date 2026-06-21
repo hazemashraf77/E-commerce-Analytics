@@ -1,4 +1,4 @@
-import { profit, marginPct, profitPerOrder, profitPerUnit, round2 } from "@/lib/kpis/core";
+import { marginPct, profit, profitPerOrder, profitPerUnit, round2 } from "@/lib/kpis/core";
 
 export interface ProductFinancialInput {
   realisedRevenue: number;
@@ -28,14 +28,14 @@ export interface ProductFinancialResult {
 export function computeProductFinancials(input: ProductFinancialInput): ProductFinancialResult {
   const totalCost = round2(
     input.cogs +
-    input.packagingCost +
-    input.shippingCost +
-    input.returnShippingCost +
-    input.adSpend +
-    input.refunds +
-    input.discounts +
-    input.compensations +
-    input.generalExpenses,
+      input.packagingCost +
+      input.shippingCost +
+      input.returnShippingCost +
+      input.adSpend +
+      input.refunds +
+      input.discounts +
+      input.compensations +
+      input.generalExpenses,
   );
 
   const netProfit = profit(input.realisedRevenue, totalCost);
