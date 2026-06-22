@@ -31,4 +31,14 @@
     "version": "Version"
   },
   "sources": { "easyOrders": "EasyOrders", "bosta": "Bosta", "meta": "Meta", "tiktok": "TikTok" }
+
+,
+"Bootstrap": {
+  "loading": "Loading...",
+  "initializing": "Initializing...",
+  "pleaseWait": "Please wait..."
 }
+
+}
+
+

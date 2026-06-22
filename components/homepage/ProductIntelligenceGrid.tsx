@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { FormulaMiniInspector } from "./FormulaMiniInspectorV3";
 import type { Terms, DimMode } from "./locale";
 import type { ProductKpiRow } from "@/modules/formula-engine";
@@ -11,6 +11,12 @@ interface GridProps {
   dimMode: DimMode;
   products: ProductKpiRow[];
   search: string;
+  /** When set by parent (View Selector), syncs the internal tab */
+  activeView?: "executive" | "finance" | "marketing" | "inventory" | "shipping" | "orders" | "all";
+  /** Loading skeleton mode */
+  loading?: boolean;
+  /** Empty state label */
+  emptyLabel?: string;
 }
 
 type TabIdx = 0|1|2|3|4|5|6|7|8|9;
@@ -63,19 +69,46 @@ function mult(n: number | null | undefined): string {
   return n == null || !isFinite(n) ? "—" : `${n.toFixed(2)}×`;
 }
 
-function NameCell({ p }: { p: ProductKpiRow }) {
+function NameCell({ p }: { p: ProductKpiRow & { imageUrl?: string | null } }) {
   return (
     <td className="px-3 py-2 sticky left-0 bg-white border-r border-gray-50 z-10">
-      <div className="font-medium text-gray-900 truncate max-w-36 text-xs" title={p.productName}>{p.productName}</div>
-      <div className="text-gray-400 font-mono text-xs">{p.sku}</div>
+      <div className="flex items-center gap-2">
+        {p.imageUrl ? (
+          <img
+            src={p.imageUrl}
+            alt={p.productName}
+            className="w-8 h-8 rounded object-cover border border-gray-100 shrink-0"
+            onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
+          />
+        ) : (
+          <div className="w-8 h-8 rounded bg-gray-100 shrink-0 flex items-center justify-center text-xs text-gray-300 font-mono">
+            {p.sku.slice(0, 2).toUpperCase()}
+          </div>
+        )}
+        <div className="min-w-0">
+          <div className="font-medium text-gray-900 truncate max-w-28 text-xs" title={p.productName}>{p.productName}</div>
+          <div className="text-gray-400 font-mono text-xs truncate">{p.sku}</div>
+        </div>
+      </div>
     </td>
   );
 }
 
-export function ProductIntelligenceGrid({ t, locale, dimMode, products, search }: GridProps) {
+export function ProductIntelligenceGrid({ t, locale, dimMode, products, search, activeView, loading, emptyLabel }: GridProps) {
   const [tab, setTab] = useState<TabIdx>(0);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [view, setView]   = useState<ViewKey | null>(null);
+
+  // Sync external activeView → internal tab (075: "Views only change visible columns")
+  useEffect(() => {
+    if (!activeView) return;
+    const MAP: Record<string, TabIdx> = {
+      executive: 0, orders: 1, finance: 4, marketing: 5,
+      shipping: 6, inventory: 7, all: 0,
+    };
+    const newTab = MAP[activeView];
+    if (newTab !== undefined) setTab(newTab);
+  }, [activeView]);
 
   const filtered = products.filter(p =>
     (p.productName.toLowerCase().includes(search.toLowerCase()) || p.sku.toLowerCase().includes(search.toLowerCase()))
@@ -226,6 +259,35 @@ export function ProductIntelligenceGrid({ t, locale, dimMode, products, search }
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
+            {/* Loading skeleton rows */}
+            {loading && filtered.length === 0 && Array.from({ length: 5 }).map((_, i) => (
+              <tr key={`skeleton-${i}`}>
+                <td className="px-3 py-3 sticky left-0 bg-white border-r border-gray-50">
+                  <div className="h-4 w-28 bg-gray-100 rounded animate-pulse mb-1" />
+                  <div className="h-3 w-16 bg-gray-50 rounded animate-pulse" />
+                </td>
+                {Array.from({ length: 6 }).map((_, j) => (
+                  <td key={j} className="px-2 py-3">
+                    <div className="h-4 w-16 bg-gray-50 rounded animate-pulse" />
+                  </td>
+                ))}
+              </tr>
+            ))}
+            {/* Empty state */}
+            {!loading && filtered.length === 0 && (
+              <tr>
+                <td colSpan={12} className="px-4 py-12 text-center">
+                  <p className="text-sm text-gray-400 font-medium">
+                    {emptyLabel ?? (locale === "ar" ? "لا توجد منتجات" : "No products found")}
+                  </p>
+                  <p className="text-xs text-gray-300 mt-1">
+                    {locale === "ar"
+                      ? "قم بإنشاء منتجات يدوياً أو قم بمزامنة بيانات المتجر"
+                      : "Create products manually or sync store data"}
+                  </p>
+                </td>
+              </tr>
+            )}
             {filtered.map(p => {
               const totalCost = (p.cogs||0)+(p.packagingCost||0)+(p.shippingCost||0)+(p.returnShippingCost||0)+(p.adSpend||0);
               const invStatus = p.inventoryStatus ?? "IN_STOCK";

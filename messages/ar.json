@@ -31,4 +31,12 @@
     "version": "الإصدار"
   },
   "sources": { "easyOrders": "إيزي أوردر", "bosta": "بوسطة", "meta": "ميتا", "tiktok": "تيك توك" }
+
+  ,
+"Bootstrap": {
+  "loading": "جاري التحميل...",
+  "initializing": "جاري التهيئة...",
+  "pleaseWait": "يرجى الانتظار..."
+}
+
 }
