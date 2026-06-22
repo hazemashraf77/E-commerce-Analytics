@@ -32,11 +32,6 @@ import {
 
 const logger = createLogger("ProductPerformanceService");
 
-const PRODUCT_ANALYTICS_STATUSES = [
-  "ACTIVE",
-  "PAUSED",
-  "OUT_OF_STOCK",
-] as const;
 
 export interface ProductPerformanceInput {
   storeId: string;
@@ -71,10 +66,9 @@ export async function computeProductPerformance(
   // ── 1. Load all active products ──────────────────────────────────────────
   const products = await prisma.product.findMany({
   where: {
-    storeId,
-    isDeleted: false,
-    status: { in: [...PRODUCT_ANALYTICS_STATUSES] },
-  },
+  storeId,
+  isDeleted: false,
+},
     select: {
       id: true, sku: true, name: true, category: true, imageUrl: true,
       defaultSellingPrice: true, unitProductCost: true, packagingCost: true,
