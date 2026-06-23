@@ -28,7 +28,7 @@ import {
   calcCashLocked, classifyInventoryStatus,
   toDimensional,
   type ProductKpiRow,
-} from "@/modules/formula-engine";
+} from "@/modules/formula-engine/application/kpi.calculator";
 
 const logger = createLogger("ProductPerformanceService");
 
@@ -77,14 +77,14 @@ export async function computeProductPerformance(
   });
 
   if (products.length === 0) {
-    return {
-  products: rows,
-  computedAt: new Date().toISOString(),
-  periodDays,
-  periodMonths,
-  source: "DB_KPI_CALCULATOR",
-};
-  }
+  return {
+    products: [],
+    computedAt: new Date().toISOString(),
+    periodDays,
+    periodMonths,
+    source: "DB_KPI_CALCULATOR",
+  };
+}
 
   const productIds = products.map(p => p.id);
 
@@ -249,7 +249,7 @@ export async function computeProductPerformance(
     const qty  = Number(layer.remainingQuantity);
     const cost = Number(layer.unitCost);
     existing.stock += qty;
-    existing.value += calcInventoryValue(qty, cost);
+    existing.value += qty * cost;
     invMap.set(layer.productId, existing);
   }
 
@@ -327,11 +327,13 @@ export async function computeProductPerformance(
     const profitMarginPct = calcProfitMarginPct(trueProfit, revenue);
 
     const profitLeakage = calcProfitLeakage({
-      returnShippingCost: a.shipCostReturn,
-      refunds:            adj.refunds,
-      compensations:      adj.compensations,
-      discounts:          0, // discounts already reduced grossRevenue
-    });
+  returnShippingCost: a.shipCostReturn,
+  refusedShippingCost: 0,
+  refunds: adj.refunds,
+  compensations: adj.compensations,
+  deadStockValue: 0,
+  excessAdSpendOnNonDelivered: 0,
+});
 
     // Marketing KPIs
     const ordersCreated   = a.orderIds.size;
@@ -347,13 +349,17 @@ export async function computeProductPerformance(
     const returnRate   = calcReturnRate(a.ordersReturned, a.ordersDelivered);
     const refusalRate  = calcRefusalRate(a.ordersRefused, a.ordersShipped);
 
-    const trueShipCost = calcTrueShippingCost(a.shipCostOutbound, a.shipCostReturn);
+   const trueShipCost = calcTrueShippingCost(
+  a.shipCostOutbound,
+  a.shipCostReturn,
+  0
+);
     const shipPerOrder = calcShippingCostPerOrder(trueShipCost, a.ordersShipped);
 
     // Inventory KPIs
     const velocity     = calcInventoryVelocity(a.unitsDelivered, periodDays);
     const daysRemaining = calcDaysRemaining(inv.stock, velocity);
-    const cashLocked   = calcCashLocked(inv.stock, Number(p.unitProductCost ?? 0));
+    const cashLocked = inv.stock * Number(p.unitProductCost ?? 0);
     const inventoryStatus = classifyInventoryStatus(
       inv.stock,
       p.minimumStockThreshold ?? 0,
@@ -421,9 +427,10 @@ export async function computeProductPerformance(
   });
 
   return {
-    products: rows,
-    computedAt: new Date().toISOString(),
-    periodDays,
-    source: "DB_KPI_CALCULATOR",
-  };
+  products: rows,
+  computedAt: new Date().toISOString(),
+  periodDays,
+  periodMonths,
+  source: "DB_KPI_CALCULATOR",
+};
 }
