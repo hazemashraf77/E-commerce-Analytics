@@ -41,6 +41,33 @@ function periodToRange(period: string, customFrom: string, customTo: string): { 
   return { from, to };
 }
 
+function formatImpactLabel(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return String(value);
+
+  if (value && typeof value === "object") {
+    const v = value as {
+      impactLabel?: unknown;
+      impactValue?: unknown;
+      profitImpact?: unknown;
+      cashImpact?: unknown;
+      revenueImpact?: unknown;
+    };
+
+    const picked =
+      v.impactLabel ??
+      v.impactValue ??
+      v.profitImpact ??
+      v.cashImpact ??
+      v.revenueImpact;
+
+    if (typeof picked === "string") return picked;
+    if (typeof picked === "number") return String(picked);
+  }
+
+  return "—";
+}
+
 export default function DashboardPage() {
   const pathname   = usePathname();
   const locale     = getLocale(pathname);
@@ -126,6 +153,8 @@ export default function DashboardPage() {
   const aov          = data?.aov ?? null;
   const smartPriority = data?.smartPriority ?? null;
 
+  const smartPriorityImpact = formatImpactLabel(smartPriority?.impactLabel);
+
   // Build ExecSummary data from kpiCards (keep existing ExecutiveSummary component)
   const cardVal = (id: string) => kpiCards.find(c => c.id === id)?.value ?? 0;
   
@@ -139,7 +168,7 @@ export default function DashboardPage() {
         decisionId:   smartPriority.decisionId,
         decisionName: smartPriority.action,
         priority:     smartPriority.priority,
-        expectedImpact: smartPriority.impactLabel,
+        expectedImpact: smartPriorityImpact,
         confidence:   0.8,
         category:     "Business",
       }]
@@ -219,8 +248,8 @@ export default function DashboardPage() {
           decision={{
             name:         smartPriority.action,
             reason:       smartPriority.reason,
-            profitImpact: smartPriority.impactLabel,
-            cashImpact:   smartPriority.impactLabel,
+            profitImpact: smartPriorityImpact,
+            cashImpact:   smartPriorityImpact,
             confidence:   0.8,
             priority:     smartPriority.priority,
             id:           smartPriority.decisionId,
