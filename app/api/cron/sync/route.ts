@@ -37,14 +37,14 @@ export async function GET(request: NextRequest) {
   try {
     // Get all active stores
     const stores = await prisma.store.findMany({
-      where: { isActive: true },
-      select: { id: true, name: true },
-    }).catch(() => [] as Array<{ id: string; name: string }>);
+  where: { status: "ACTIVE" },
+  select: { id: true, name: true },
+});
 
-    if (stores.length === 0) {
-      logger.info("No active stores to sync");
-      return NextResponse.json({ status: "no_stores" });
-    }
+if (stores.length === 0) {
+  logger.info("No active stores to sync");
+  return NextResponse.json({ status: "no_stores" });
+}
 
     const allResults = [];
 
