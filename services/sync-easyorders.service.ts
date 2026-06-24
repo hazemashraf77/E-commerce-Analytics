@@ -144,9 +144,9 @@ export async function syncEasyOrders(
 
       const res = await fetch(`${baseUrl}/api/v1/orders?${qs.toString()}`, {
         headers: {
-          "Authorization": `Bearer ${env.EAZY_ORDER_API_KEY}`,
-          "Accept":        "application/json",
-        },
+  "Api-Key": env.EAZY_ORDER_API_KEY,
+  "Accept": "application/json",
+},
         signal: AbortSignal.timeout(30_000),
       });
 
