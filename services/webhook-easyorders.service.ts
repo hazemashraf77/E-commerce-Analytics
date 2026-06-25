@@ -346,24 +346,24 @@ async function upsertOrder(storeId: string, order: Record<string, unknown>): Pro
   if (!dbOrder) return;
 
   const items = (
-  Array.isArray(order.cart_items)
-    ? order.cart_items
-    : Array.isArray(order.items)
-      ? order.items
-      : Array.isArray(order.order_items)
-        ? order.order_items
-        : []
-) as Record<string, unknown>[];
+    Array.isArray(order.cart_items)
+      ? order.cart_items
+      : Array.isArray(order.items)
+        ? order.items
+        : Array.isArray(order.order_items)
+          ? order.order_items
+          : []
+  ) as Record<string, unknown>[];
 
-logger.info("EasyOrders webhook items debug", {
-  metadata: {
-    providerOrderId,
-    itemsCount: items.length,
-    hasCartItems: Array.isArray(order.cart_items),
-    hasItems: Array.isArray(order.items),
-    hasOrderItems: Array.isArray(order.order_items),
-  },
-});
+  logger.info("EasyOrders webhook items debug", {
+    metadata: {
+      providerOrderId,
+      itemsCount: items.length,
+      hasCartItems: Array.isArray(order.cart_items),
+      hasItems: Array.isArray(order.items),
+      hasOrderItems: Array.isArray(order.order_items),
+    },
+  });
 
   for (let idx = 0; idx < items.length; idx++) {
     const item = items[idx];
@@ -391,29 +391,17 @@ async function upsertOrderItem(
       : null;
 
   const sku = String(
-    item.sku ??
-      item.product_sku ??
-      providerProduct?.sku ??
-      providerProduct?.slug ??
-      "",
+    item.sku ?? item.product_sku ?? providerProduct?.sku ?? providerProduct?.slug ?? "",
   ).trim();
 
-  const provProductId = String(
-    item.product_id ??
-      providerProduct?.id ??
-      item.id ??
-      "",
-  ).trim();
+  const provProductId = String(item.product_id ?? providerProduct?.id ?? item.id ?? "").trim();
 
-  const productName = String(
-    item.product_name ??
-      item.name ??
-      providerProduct?.name ??
-      "",
-  ).trim();
+  const productName = String(item.product_name ?? item.name ?? providerProduct?.name ?? "").trim();
 
   const qtyRaw = parseFloat(String(item.quantity ?? "1"));
-  const priceRaw = parseFloat(String(item.unit_price ?? item.price ?? providerProduct?.price ?? "0"));
+  const priceRaw = parseFloat(
+    String(item.unit_price ?? item.price ?? providerProduct?.price ?? "0"),
+  );
   const discRaw = parseFloat(String(item.discount ?? "0"));
 
   const quantity = new Decimal(isFinite(qtyRaw) ? qtyRaw : 1);
@@ -450,18 +438,20 @@ async function upsertOrderItem(
 
   const externalId = `${providerOrderId}:item:${itemIdx}`;
 
-  const rawPayload = JSON.parse(JSON.stringify({
-    provider_order_id: providerOrderId,
-    order_db_id: orderId,
-    item_index: itemIdx,
-    product_id: provProductId,
-    sku,
-    product_name: productName,
-    quantity: qtyRaw,
-    unit_price: priceRaw,
-    discount: discRaw,
-    raw: item,
-  }));
+  const rawPayload = JSON.parse(
+    JSON.stringify({
+      provider_order_id: providerOrderId,
+      order_db_id: orderId,
+      item_index: itemIdx,
+      product_id: provProductId,
+      sku,
+      product_name: productName,
+      quantity: qtyRaw,
+      unit_price: priceRaw,
+      discount: discRaw,
+      raw: item,
+    }),
+  );
 
   const stagingExisting = await prisma.importStaging.findFirst({
     where: { provider: "EASYORDERS", externalId },
@@ -501,19 +491,6 @@ export async function handleEasyOrdersWebhook(
   });
 
   // ── Idempotency ──────────────────────────────────────────────────────────
-  const existing = await prisma.webhookLog
-    .findUnique({
-      where: { provider_externalId: { provider: "EASYORDERS", externalId } },
-      select: { id: true, status: true },
-    })
-    .catch(() => null);
-
-  if (existing) {
-    logger.info("EasyOrders webhook duplicate — ignoring", {
-      metadata: { externalId, previousStatus: existing.status },
-    });
-    return { outcome: "duplicate", eventType, externalId, orderId: orderId || undefined };
-  }
 
   // ── Log ──────────────────────────────────────────────────────────────────
   const safeHeaders: Record<string, string> = {};
@@ -609,8 +586,6 @@ export async function handleEasyOrdersWebhook(
     });
 
     const orderData = await fetchOrderFromPublicApi(orderId, env.EAZY_ORDER_API_KEY);
-
-
 
     if (!orderData) {
       // Order returned 404 — nothing to upsert
