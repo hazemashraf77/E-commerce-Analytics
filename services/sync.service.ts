@@ -57,12 +57,21 @@ export async function runSync(options: SyncOptions): Promise<SyncResult[]> {
 
   const results: SyncResult[] = [];
 
-  if (providers.includes("EAZY_ORDER") && isIntegrationEnabled("EAZY_ORDER")) {
-    results.push(await syncEasyOrders(storeId, fullSync));
-  } else if (providers.includes("EAZY_ORDER")) {
-    logger.warn("EasyOrders sync skipped — credentials not configured", { metadata: { storeId } });
-    results.push({ provider: "EAZY_ORDER", scope: "orders", status: "skipped", recordsProcessed: 0, recordsFailed: 0, errors: ["Credentials not configured"], durationMs: 0 });
-  }
+  if (providers.includes("EAZY_ORDER")) {
+  logger.info("EasyOrders scheduled sync skipped — webhooks are source of truth", {
+    metadata: { storeId },
+  });
+
+  results.push({
+    provider: "EAZY_ORDER",
+    scope: "orders",
+    status: "skipped",
+    recordsProcessed: 0,
+    recordsFailed: 0,
+    errors: ["EasyOrders uses webhooks; list-orders API is not available."],
+    durationMs: 0,
+  });
+}
 
   if (providers.includes("BOSTA") && isIntegrationEnabled("BOSTA")) {
     const bostaResults = await Promise.all([

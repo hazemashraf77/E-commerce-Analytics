@@ -95,39 +95,15 @@ export class EasyOrdersClient {
     return res.json() as Promise<T>;
   }
 
-  async *fetchOrders(params: EazyListOrdersParams = {}): AsyncGenerator<EazyOrderRawOrder[]> {
-    let page = params.page ?? 1;
-    const limit = params.per_page ?? 100;
-
-    while (true) {
-      const qs = new URLSearchParams({
-        page: String(page),
-        limit: String(limit),
-        ...(params.status ? { status: params.status } : {}),
-        ...(params.updated_after ? { updated_after: params.updated_after } : {}),
-        ...(params.created_after ? { created_after: params.created_after } : {}),
-      });
-
-      const response = await this.request<PaginatedResponse<EazyOrderRawOrder>>(
-        `/orders?${qs.toString()}`
-      );
-
-      const rows = response.data ?? [];
-      if (rows.length === 0) break;
-
-      yield rows;
-
-      const lastPage = response.meta?.last_page ?? page;
-      if (page >= lastPage) break;
-
-      page++;
-      await sleep(200);
-    }
-  }
+  async *fetchOrders(): AsyncGenerator<EazyOrderRawOrder[]> {
+  throw new Error("EasyOrders list-orders API is not available. Use webhooks + fetchOrder(orderId).");
+}
 
   async fetchOrder(orderId: string): Promise<EazyOrderRawOrder> {
-    return this.request<EazyOrderRawOrder>(`/orders/${orderId}`);
-  }
+  return this.request<EazyOrderRawOrder>(
+    `/external-apps/orders/${encodeURIComponent(orderId)}`
+  );
+}
 
   async *fetchProducts(params: EazyListProductsParams = {}): AsyncGenerator<EazyOrderRawProduct[]> {
     let page = params.page ?? 1;
