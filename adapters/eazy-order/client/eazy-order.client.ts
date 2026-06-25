@@ -109,7 +109,7 @@ export class EasyOrdersClient {
       });
 
       const response = await this.request<PaginatedResponse<EazyOrderRawOrder>>(
-        `/external-apps/orders?${qs.toString()}`
+        `/orders?${qs.toString()}`
       );
 
       const rows = response.data ?? [];
@@ -126,7 +126,7 @@ export class EasyOrdersClient {
   }
 
   async fetchOrder(orderId: string): Promise<EazyOrderRawOrder> {
-    return this.request<EazyOrderRawOrder>(`/external-apps/orders/${orderId}`);
+    return this.request<EazyOrderRawOrder>(`/orders/${orderId}`);
   }
 
   async *fetchProducts(params: EazyListProductsParams = {}): AsyncGenerator<EazyOrderRawProduct[]> {

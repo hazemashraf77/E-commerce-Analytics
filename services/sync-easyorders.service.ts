@@ -142,7 +142,7 @@ export async function syncEasyOrders(
 
       logger.info("EasyOrders: fetching page", { metadata: { page, perPage, updatedAfter } });
 
-      const res = await fetch(`${baseUrl}/api/v1/external-apps/orders?${qs.toString()}`, {
+      const res = await fetch(`${baseUrl}/api/v1/orders?${qs.toString()}`, {
         headers: {
   "Api-Key": env.EAZY_ORDER_API_KEY,
   "Accept": "application/json",
