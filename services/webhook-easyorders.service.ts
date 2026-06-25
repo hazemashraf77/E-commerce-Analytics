@@ -354,6 +354,17 @@ async function upsertOrder(storeId: string, order: Record<string, unknown>): Pro
         ? order.order_items
         : []
 ) as Record<string, unknown>[];
+
+logger.info("EasyOrders webhook items debug", {
+  metadata: {
+    providerOrderId,
+    itemsCount: items.length,
+    hasCartItems: Array.isArray(order.cart_items),
+    hasItems: Array.isArray(order.items),
+    hasOrderItems: Array.isArray(order.order_items),
+  },
+});
+
   for (let idx = 0; idx < items.length; idx++) {
     const item = items[idx];
     if (!item) continue;
