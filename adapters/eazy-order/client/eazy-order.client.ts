@@ -49,9 +49,9 @@ export class EasyOrdersClient {
   private readonly apiKey: string;
 
   constructor(apiKey: string, storeUrl?: string) {
-    this.apiKey = apiKey;
-    this.baseUrl = (storeUrl || EAZY_BASE_URL).replace(/\/$/, "");
-  }
+  this.apiKey = apiKey;
+  this.baseUrl = EAZY_BASE_URL;
+}
 
   private async request<T>(
     path: string,
