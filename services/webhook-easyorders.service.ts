@@ -345,7 +345,15 @@ async function upsertOrder(storeId: string, order: Record<string, unknown>): Pro
   });
   if (!dbOrder) return;
 
-  const items = (order.items ?? order.order_items ?? []) as Record<string, unknown>[];
+  const items = (
+  Array.isArray(order.cart_items)
+    ? order.cart_items
+    : Array.isArray(order.items)
+      ? order.items
+      : Array.isArray(order.order_items)
+        ? order.order_items
+        : []
+) as Record<string, unknown>[];
   for (let idx = 0; idx < items.length; idx++) {
     const item = items[idx];
     if (!item) continue;
@@ -366,19 +374,42 @@ async function upsertOrderItem(
   item: Record<string, unknown>,
   itemIdx: number,
 ): Promise<void> {
-  const sku = String(item.sku ?? item.product_sku ?? "").trim();
-  const provProductId = String(item.product_id ?? item.id ?? "").trim();
-  const productName = String(item.product_name ?? item.name ?? "").trim();
+  const providerProduct =
+    item.product && typeof item.product === "object" && !Array.isArray(item.product)
+      ? (item.product as Record<string, unknown>)
+      : null;
+
+  const sku = String(
+    item.sku ??
+      item.product_sku ??
+      providerProduct?.sku ??
+      providerProduct?.slug ??
+      "",
+  ).trim();
+
+  const provProductId = String(
+    item.product_id ??
+      providerProduct?.id ??
+      item.id ??
+      "",
+  ).trim();
+
+  const productName = String(
+    item.product_name ??
+      item.name ??
+      providerProduct?.name ??
+      "",
+  ).trim();
 
   const qtyRaw = parseFloat(String(item.quantity ?? "1"));
-  const priceRaw = parseFloat(String(item.unit_price ?? item.price ?? "0"));
+  const priceRaw = parseFloat(String(item.unit_price ?? item.price ?? providerProduct?.price ?? "0"));
   const discRaw = parseFloat(String(item.discount ?? "0"));
 
   const quantity = new Decimal(isFinite(qtyRaw) ? qtyRaw : 1);
   const unitPrice = new Decimal(isFinite(priceRaw) ? priceRaw : 0);
   const discount = new Decimal(isFinite(discRaw) ? discRaw : 0);
 
-  const product = sku
+  const matchedProduct = sku
     ? await prisma.product
         .findUnique({
           where: { storeId_sku: { storeId, sku } },
@@ -387,12 +418,12 @@ async function upsertOrderItem(
         .catch(() => null)
     : null;
 
-  if (product) {
-    // PATH A: product in catalogue → real OrderItem
+  if (matchedProduct) {
     const existing = await prisma.orderItem.findFirst({
-      where: { orderId, productId: product.id },
+      where: { orderId, productId: matchedProduct.id },
       select: { id: true },
     });
+
     if (existing) {
       await prisma.orderItem.update({
         where: { id: existing.id },
@@ -400,15 +431,15 @@ async function upsertOrderItem(
       });
     } else {
       await prisma.orderItem.create({
-        data: { orderId, productId: product.id, quantity, unitPrice, discount },
+        data: { orderId, productId: matchedProduct.id, quantity, unitPrice, discount },
       });
     }
     return;
   }
 
-  // PATH B: no product match → ImportStaging for Sprint 2
   const externalId = `${providerOrderId}:item:${itemIdx}`;
-  const rawPayload = {
+
+  const rawPayload = JSON.parse(JSON.stringify({
     provider_order_id: providerOrderId,
     order_db_id: orderId,
     item_index: itemIdx,
@@ -419,12 +450,13 @@ async function upsertOrderItem(
     unit_price: priceRaw,
     discount: discRaw,
     raw: item,
-  };
+  }));
 
   const stagingExisting = await prisma.importStaging.findFirst({
     where: { provider: "EASYORDERS", externalId },
     select: { id: true },
   });
+
   if (stagingExisting) {
     await prisma.importStaging.update({
       where: { id: stagingExisting.id },
@@ -567,17 +599,7 @@ export async function handleEasyOrdersWebhook(
 
     const orderData = await fetchOrderFromPublicApi(orderId, env.EAZY_ORDER_API_KEY);
 
-    logger.info("EasyOrders orderData debug", {
-      metadata: {
-        orderId,
-        keys: Object.keys(orderData ?? {}),
-        itemsType: Array.isArray(orderData?.items) ? "items_array" : typeof orderData?.items,
-        orderItemsType: Array.isArray(orderData?.order_items)
-          ? "order_items_array"
-          : typeof orderData?.order_items,
-        sample: JSON.stringify(orderData).slice(0, 3000),
-      },
-    });
+
 
     if (!orderData) {
       // Order returned 404 — nothing to upsert
