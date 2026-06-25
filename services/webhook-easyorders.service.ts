@@ -14,11 +14,11 @@
  * Sprint 1 batch sync (processOrder pattern). Providers stay isolated.
  */
 
+import { Decimal } from "@prisma/client/runtime/library";
+import type { OrderStatus, PaymentStatus, MarketingPlatform } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { createLogger } from "@/lib/logger";
 import { getServerEnv } from "@/lib/env";
-import { Decimal } from "@prisma/client/runtime/library";
-import type { OrderStatus, PaymentStatus, MarketingPlatform } from "@prisma/client";
 
 const logger = createLogger("EasyOrdersWebhookService");
 
@@ -44,13 +44,9 @@ export type EasyOrdersEventType =
  * Exported so the route can call it before choosing the webhook secret.
  */
 export function detectEventType(payload: Record<string, unknown>): EasyOrdersEventType {
-  const raw = String(
-    payload.event_type ??
-    payload.event ??
-    payload.type ??
-    payload.action ??
-    "",
-  ).toLowerCase().replace(/[\s-]/g, "_");
+  const raw = String(payload.event_type ?? payload.event ?? payload.type ?? payload.action ?? "")
+    .toLowerCase()
+    .replace(/[\s-]/g, "_");
 
   if (!raw) {
     // No event field — try to infer from payload shape
@@ -58,13 +54,13 @@ export function detectEventType(payload: Record<string, unknown>): EasyOrdersEve
     return hasStatusOnly ? "order.status_updated" : "order.created";
   }
 
-  if (raw.includes("creat") || raw.includes("new"))                 return "order.created";
-  if (raw.includes("status") || raw.includes("update"))             return "order.status_updated";
-  if (raw.includes("confirm"))                                       return "order.confirmed";
-  if (raw.includes("ship") && !raw.includes("status"))              return "order.shipped";
-  if (raw.includes("deliv"))                                         return "order.delivered";
-  if (raw.includes("cancel"))                                        return "order.cancelled";
-  if (raw.includes("return") || raw.includes("refund"))             return "order.returned";
+  if (raw.includes("creat") || raw.includes("new")) return "order.created";
+  if (raw.includes("status") || raw.includes("update")) return "order.status_updated";
+  if (raw.includes("confirm")) return "order.confirmed";
+  if (raw.includes("ship") && !raw.includes("status")) return "order.shipped";
+  if (raw.includes("deliv")) return "order.delivered";
+  if (raw.includes("cancel")) return "order.cancelled";
+  if (raw.includes("return") || raw.includes("refund")) return "order.returned";
 
   const hasOrderData = payload.order_id ?? payload.data ?? payload.order;
   return hasOrderData ? "order.status_updated" : "unknown";
@@ -82,44 +78,44 @@ export function isOrderEvent(eventType: EasyOrdersEventType): boolean {
 // ── Status maps (same as Sprint 1 batch sync) ─────────────────────────────
 
 const ORDER_STATUS_MAP: Record<string, OrderStatus> = {
-  new:              "PENDING",
-  pending:          "PENDING",
-  draft:            "DRAFT",
-  confirmed:        "CONFIRMED",
-  processing:       "PROCESSING",
-  preparing:        "PROCESSING",
-  ready:            "READY_TO_SHIP",
-  ready_to_ship:    "READY_TO_SHIP",
-  shipped:          "SHIPPED",
-  in_transit:       "SHIPPED",
+  new: "PENDING",
+  pending: "PENDING",
+  draft: "DRAFT",
+  confirmed: "CONFIRMED",
+  processing: "PROCESSING",
+  preparing: "PROCESSING",
+  ready: "READY_TO_SHIP",
+  ready_to_ship: "READY_TO_SHIP",
+  shipped: "SHIPPED",
+  in_transit: "SHIPPED",
   out_for_delivery: "SHIPPED",
-  delivered:        "DELIVERED",
-  completed:        "DELIVERED",
-  closed:           "CLOSED",
-  cancelled:        "CANCELLED",
-  canceled:         "CANCELLED",
-  returned:         "CANCELLED",
-  refunded:         "CLOSED",
-  on_hold:          "PENDING",
+  delivered: "DELIVERED",
+  completed: "DELIVERED",
+  closed: "CLOSED",
+  cancelled: "CANCELLED",
+  canceled: "CANCELLED",
+  returned: "CANCELLED",
+  refunded: "CLOSED",
+  on_hold: "PENDING",
 };
 
 const PAYMENT_STATUS_MAP: Record<string, PaymentStatus> = {
-  cod:     "PENDING",
-  cash:    "PENDING",
-  online:  "PAID",
+  cod: "PENDING",
+  cash: "PENDING",
+  online: "PAID",
   prepaid: "PAID",
-  paid:    "PAID",
-  free:    "PAID",
+  paid: "PAID",
+  free: "PAID",
 };
 
 const MARKETING_PLATFORM_MAP: Record<string, MarketingPlatform> = {
-  meta:     "META",
+  meta: "META",
   facebook: "META",
-  fb:       "META",
-  tiktok:   "TIKTOK",
-  tt:       "TIKTOK",
-  direct:   "DIRECT",
-  organic:  "ORGANIC",
+  fb: "META",
+  tiktok: "TIKTOK",
+  tt: "TIKTOK",
+  direct: "DIRECT",
+  organic: "ORGANIC",
   referral: "REFERRAL",
 };
 
@@ -138,17 +134,17 @@ export interface WebhookHandleResult {
 function extractOrderId(payload: Record<string, unknown>): string {
   const data =
     payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
-      ? payload.data as Record<string, unknown>
+      ? (payload.data as Record<string, unknown>)
       : undefined;
 
   const order =
     payload.order && typeof payload.order === "object" && !Array.isArray(payload.order)
-      ? payload.order as Record<string, unknown>
+      ? (payload.order as Record<string, unknown>)
       : undefined;
 
   const status =
     payload.status && typeof payload.status === "object" && !Array.isArray(payload.status)
-      ? payload.status as Record<string, unknown>
+      ? (payload.status as Record<string, unknown>)
       : undefined;
 
   const possible = [
@@ -207,7 +203,7 @@ function extractOrderId(payload: Record<string, unknown>): string {
     status?.id,
   ];
 
-  const found = possible.find(v => typeof v === "string" && v.trim());
+  const found = possible.find((v) => typeof v === "string" && v.trim());
   return found ? String(found).trim() : "";
 }
 
@@ -219,7 +215,9 @@ function buildExternalId(
   const explicit = String(payload.event_id ?? payload.id ?? "").trim();
   if (explicit) return `eo:${explicit}`;
 
-  const timestamp = String(payload.updated_at ?? payload.created_at ?? payload.timestamp ?? "").trim();
+  const timestamp = String(
+    payload.updated_at ?? payload.created_at ?? payload.timestamp ?? "",
+  ).trim();
   if (orderId) return `eo:${orderId}:${eventType}:${timestamp || "latest"}`;
 
   return `eo:unknown:${eventType}:${timestamp || Date.now()}`;
@@ -240,7 +238,7 @@ async function fetchOrderFromPublicApi(
   apiKey: string,
 ): Promise<Record<string, unknown> | null> {
   const baseUrl = getEasyOrdersApiBase();
-const url = `${baseUrl}/api/v1/external-apps/orders/${encodeURIComponent(orderId)}`;
+  const url = `${baseUrl}/api/v1/external-apps/orders/${encodeURIComponent(orderId)}`;
 
   logger.info("EasyOrders webhook: fetching order from Public API", {
     metadata: { orderId, url },
@@ -250,7 +248,7 @@ const url = `${baseUrl}/api/v1/external-apps/orders/${encodeURIComponent(orderId
     method: "GET",
     headers: {
       "Api-Key": apiKey,
-      "Accept":  "application/json",
+      Accept: "application/json",
     },
     signal: AbortSignal.timeout(20_000),
   });
@@ -265,7 +263,7 @@ const url = `${baseUrl}/api/v1/external-apps/orders/${encodeURIComponent(orderId
     throw new Error(`EasyOrders Public API ${res.status}: ${text.slice(0, 200)}`);
   }
 
-  const json = await res.json() as Record<string, unknown>;
+  const json = (await res.json()) as Record<string, unknown>;
 
   // API may wrap data under .data or .order
   const order = (
@@ -281,25 +279,22 @@ const url = `${baseUrl}/api/v1/external-apps/orders/${encodeURIComponent(orderId
 
 // ── Order upsert (same pattern as Sprint 1 batch sync) ────────────────────
 
-async function upsertOrder(
-  storeId: string,
-  order: Record<string, unknown>,
-): Promise<void> {
-  const providerOrderId = String(
-    order.id ?? order.uuid ?? order.order_id ?? "",
-  ).trim();
+async function upsertOrder(storeId: string, order: Record<string, unknown>): Promise<void> {
+  const providerOrderId = String(order.id ?? order.uuid ?? order.order_id ?? "").trim();
   if (!providerOrderId) throw new Error("Order has no id");
 
-  const statusRaw     = String(order.status ?? "new").toLowerCase().replace(/-/g, "_");
-  const orderStatus   = ORDER_STATUS_MAP[statusRaw] ?? "PENDING" as OrderStatus;
+  const statusRaw = String(order.status ?? "new")
+    .toLowerCase()
+    .replace(/-/g, "_");
+  const orderStatus = ORDER_STATUS_MAP[statusRaw] ?? ("PENDING" as OrderStatus);
 
-  const payMethodRaw  = String(order.payment_method ?? "cod").toLowerCase();
-  const paymentStatus = PAYMENT_STATUS_MAP[payMethodRaw] ?? "UNKNOWN" as PaymentStatus;
+  const payMethodRaw = String(order.payment_method ?? "cod").toLowerCase();
+  const paymentStatus = PAYMENT_STATUS_MAP[payMethodRaw] ?? ("UNKNOWN" as PaymentStatus);
 
-  const feeRaw            = parseFloat(String(order.customer_shipping_fee ?? order.shipping_fee ?? "0"));
+  const feeRaw = parseFloat(String(order.customer_shipping_fee ?? order.shipping_fee ?? "0"));
   const customerShippingFee = new Decimal(isFinite(feeRaw) ? feeRaw : 0);
 
-  const mktRaw      = order.marketing_source ?? order.source;
+  const mktRaw = order.marketing_source ?? order.source;
   const marketingSource: MarketingPlatform | null = mktRaw
     ? (MARKETING_PLATFORM_MAP[String(mktRaw).toLowerCase()] ?? "UNKNOWN")
     : null;
@@ -323,15 +318,15 @@ async function upsertOrder(
     },
     create: {
       storeId,
-      provider:           "EASYORDERS",
+      provider: "EASYORDERS",
       providerOrderId,
       orderDate,
       customerShippingFee,
-      paymentMethod:      payMethodRaw,
+      paymentMethod: payMethodRaw,
       paymentStatus,
       orderStatus,
       marketingSource,
-      syncedAt:           new Date(),
+      syncedAt: new Date(),
     },
   });
 
@@ -341,7 +336,9 @@ async function upsertOrder(
   const dbOrder = await prisma.order.findUnique({
     where: {
       storeId_provider_providerOrderId: {
-        storeId, provider: "EASYORDERS", providerOrderId,
+        storeId,
+        provider: "EASYORDERS",
+        providerOrderId,
       },
     },
     select: { id: true },
@@ -363,41 +360,43 @@ async function upsertOrder(
 }
 
 async function upsertOrderItem(
-  storeId:         string,
-  orderId:         string,
+  storeId: string,
+  orderId: string,
   providerOrderId: string,
-  item:            Record<string, unknown>,
-  itemIdx:         number,
+  item: Record<string, unknown>,
+  itemIdx: number,
 ): Promise<void> {
-  const sku           = String(item.sku          ?? item.product_sku  ?? "").trim();
-  const provProductId = String(item.product_id   ?? item.id           ?? "").trim();
-  const productName   = String(item.product_name ?? item.name         ?? "").trim();
+  const sku = String(item.sku ?? item.product_sku ?? "").trim();
+  const provProductId = String(item.product_id ?? item.id ?? "").trim();
+  const productName = String(item.product_name ?? item.name ?? "").trim();
 
-  const qtyRaw   = parseFloat(String(item.quantity   ?? "1"));
+  const qtyRaw = parseFloat(String(item.quantity ?? "1"));
   const priceRaw = parseFloat(String(item.unit_price ?? item.price ?? "0"));
-  const discRaw  = parseFloat(String(item.discount   ?? "0"));
+  const discRaw = parseFloat(String(item.discount ?? "0"));
 
-  const quantity  = new Decimal(isFinite(qtyRaw)   ? qtyRaw   : 1);
-  const unitPrice = new Decimal(isFinite(priceRaw)  ? priceRaw : 0);
-  const discount  = new Decimal(isFinite(discRaw)   ? discRaw  : 0);
+  const quantity = new Decimal(isFinite(qtyRaw) ? qtyRaw : 1);
+  const unitPrice = new Decimal(isFinite(priceRaw) ? priceRaw : 0);
+  const discount = new Decimal(isFinite(discRaw) ? discRaw : 0);
 
   const product = sku
-    ? await prisma.product.findUnique({
-        where:  { storeId_sku: { storeId, sku } },
-        select: { id: true },
-      }).catch(() => null)
+    ? await prisma.product
+        .findUnique({
+          where: { storeId_sku: { storeId, sku } },
+          select: { id: true },
+        })
+        .catch(() => null)
     : null;
 
   if (product) {
     // PATH A: product in catalogue → real OrderItem
     const existing = await prisma.orderItem.findFirst({
-      where:  { orderId, productId: product.id },
+      where: { orderId, productId: product.id },
       select: { id: true },
     });
     if (existing) {
       await prisma.orderItem.update({
         where: { id: existing.id },
-        data:  { quantity, unitPrice, discount },
+        data: { quantity, unitPrice, discount },
       });
     } else {
       await prisma.orderItem.create({
@@ -411,34 +410,34 @@ async function upsertOrderItem(
   const externalId = `${providerOrderId}:item:${itemIdx}`;
   const rawPayload = {
     provider_order_id: providerOrderId,
-    order_db_id:       orderId,
-    item_index:        itemIdx,
-    product_id:        provProductId,
+    order_db_id: orderId,
+    item_index: itemIdx,
+    product_id: provProductId,
     sku,
-    product_name:      productName,
-    quantity:          qtyRaw,
-    unit_price:        priceRaw,
-    discount:          discRaw,
-    raw:               item,
+    product_name: productName,
+    quantity: qtyRaw,
+    unit_price: priceRaw,
+    discount: discRaw,
+    raw: item,
   };
 
   const stagingExisting = await prisma.importStaging.findFirst({
-    where:  { provider: "EASYORDERS", externalId },
+    where: { provider: "EASYORDERS", externalId },
     select: { id: true },
   });
   if (stagingExisting) {
     await prisma.importStaging.update({
       where: { id: stagingExisting.id },
-      data:  { rawPayload, processedAt: null, status: "PENDING", retryCount: 0 },
+      data: { rawPayload, processedAt: null, status: "PENDING", retryCount: 0 },
     });
   } else {
     await prisma.importStaging.create({
       data: {
-        provider:   "EASYORDERS",
+        provider: "EASYORDERS",
         entityType: "ORDER_ITEM",
         externalId,
         rawPayload,
-        status:     "PENDING",
+        status: "PENDING",
       },
     });
   }
@@ -447,11 +446,11 @@ async function upsertOrderItem(
 // ── Main handler ───────────────────────────────────────────────────────────
 
 export async function handleEasyOrdersWebhook(
-  payload:    Record<string, unknown>,
+  payload: Record<string, unknown>,
   rawHeaders: Record<string, string>,
-  eventType:  EasyOrdersEventType, // pre-detected by route
+  eventType: EasyOrdersEventType, // pre-detected by route
 ): Promise<WebhookHandleResult> {
-  const orderId    = extractOrderId(payload);
+  const orderId = extractOrderId(payload);
   const externalId = buildExternalId(payload, orderId, eventType);
 
   logger.info("EasyOrders webhook received", {
@@ -459,10 +458,12 @@ export async function handleEasyOrdersWebhook(
   });
 
   // ── Idempotency ──────────────────────────────────────────────────────────
-  const existing = await prisma.webhookLog.findUnique({
-    where:  { provider_externalId: { provider: "EASYORDERS", externalId } },
-    select: { id: true, status: true },
-  }).catch(() => null);
+  const existing = await prisma.webhookLog
+    .findUnique({
+      where: { provider_externalId: { provider: "EASYORDERS", externalId } },
+      select: { id: true, status: true },
+    })
+    .catch(() => null);
 
   if (existing) {
     logger.info("EasyOrders webhook duplicate — ignoring", {
@@ -473,55 +474,68 @@ export async function handleEasyOrdersWebhook(
 
   // ── Log ──────────────────────────────────────────────────────────────────
   const safeHeaders: Record<string, string> = {};
-  for (const h of ["content-type","secret","x-webhook-secret","webhook-secret","x-request-id","user-agent"]) {
+  for (const h of [
+    "content-type",
+    "secret",
+    "x-webhook-secret",
+    "webhook-secret",
+    "x-request-id",
+    "user-agent",
+  ]) {
     if (rawHeaders[h]) safeHeaders[h] = rawHeaders[h];
   }
 
-  const log = await prisma.webhookLog.create({
-    data: {
-      provider:   "EASYORDERS",
-      eventType,
-      externalId,
-      payload:    payload as object,
-      headers:    safeHeaders as object,
-      status:     "RECEIVED",
-    },
-  }).catch((err) => {
-    logger.error("EasyOrders webhook: log create failed", { metadata: { error: String(err) } });
-    return null;
-  });
+  const log = await prisma.webhookLog
+    .create({
+      data: {
+        provider: "EASYORDERS",
+        eventType,
+        externalId,
+        payload: payload as object,
+        headers: safeHeaders as object,
+        status: "RECEIVED",
+      },
+    })
+    .catch((err) => {
+      logger.error("EasyOrders webhook: log create failed", { metadata: { error: String(err) } });
+      return null;
+    });
 
   // ── Validate ─────────────────────────────────────────────────────────────
   if (eventType === "unknown") {
-  logger.info("EasyOrders webhook: ignoring — unknown event type", {
-    metadata: { eventType, orderId, externalId },
-  });
-  if (log) {
-    await prisma.webhookLog.update({
-      where: { id: log.id },
-      data: { status: "IGNORED", errorMessage: "Unknown event type" },
-    }).catch(() => {});
+    logger.info("EasyOrders webhook: ignoring — unknown event type", {
+      metadata: { eventType, orderId, externalId },
+    });
+    if (log) {
+      await prisma.webhookLog
+        .update({
+          where: { id: log.id },
+          data: { status: "IGNORED", errorMessage: "Unknown event type" },
+        })
+        .catch(() => {});
+    }
+    return { outcome: "ignored", eventType, externalId };
   }
-  return { outcome: "ignored", eventType, externalId };
-}
 
-if (!orderId) {
-  logger.warn("EasyOrders webhook: ignoring — missing orderId", {
-    metadata: { eventType, externalId },
-  });
-  if (log) {
-    await prisma.webhookLog.update({
-      where: { id: log.id },
-      data: { status: "IGNORED", errorMessage: "Missing orderId" },
-    }).catch(() => {});
+  if (!orderId) {
+    logger.warn("EasyOrders webhook: ignoring — missing orderId", {
+      metadata: { eventType, externalId },
+    });
+    if (log) {
+      await prisma.webhookLog
+        .update({
+          where: { id: log.id },
+          data: { status: "IGNORED", errorMessage: "Missing orderId" },
+        })
+        .catch(() => {});
+    }
+    return {
+      outcome: "ignored",
+      eventType,
+      externalId,
+      errorMessage: "Missing orderId",
+    };
   }
-  return {
-    outcome: "ignored",
-    eventType,
-    externalId,
-    errorMessage: "Missing orderId",
-  };
-}
 
   // ── Store ────────────────────────────────────────────────────────────────
   const store = await prisma.store.findFirst({ select: { id: true } }).catch(() => null);
@@ -529,10 +543,12 @@ if (!orderId) {
     const errorMessage = "No store found in database";
     logger.error("EasyOrders webhook: no store", { metadata: { externalId } });
     if (log) {
-      await prisma.webhookLog.update({
-        where: { id: log.id },
-        data:  { status: "FAILED", errorMessage },
-      }).catch(() => {});
+      await prisma.webhookLog
+        .update({
+          where: { id: log.id },
+          data: { status: "FAILED", errorMessage },
+        })
+        .catch(() => {});
     }
     return { outcome: "failed", eventType, externalId, orderId, errorMessage };
   }
@@ -551,16 +567,30 @@ if (!orderId) {
 
     const orderData = await fetchOrderFromPublicApi(orderId, env.EAZY_ORDER_API_KEY);
 
+    logger.info("EasyOrders orderData debug", {
+      metadata: {
+        orderId,
+        keys: Object.keys(orderData ?? {}),
+        itemsType: Array.isArray(orderData?.items) ? "items_array" : typeof orderData?.items,
+        orderItemsType: Array.isArray(orderData?.order_items)
+          ? "order_items_array"
+          : typeof orderData?.order_items,
+        sample: JSON.stringify(orderData).slice(0, 3000),
+      },
+    });
+
     if (!orderData) {
       // Order returned 404 — nothing to upsert
       logger.warn("EasyOrders webhook: order not found in Public API — ignoring", {
         metadata: { orderId, externalId },
       });
       if (log) {
-        await prisma.webhookLog.update({
-          where: { id: log.id },
-          data:  { status: "IGNORED" },
-        }).catch(() => {});
+        await prisma.webhookLog
+          .update({
+            where: { id: log.id },
+            data: { status: "IGNORED" },
+          })
+          .catch(() => {});
       }
       return { outcome: "ignored", eventType, externalId, orderId };
     }
@@ -572,24 +602,27 @@ if (!orderId) {
     });
 
     if (log) {
-      await prisma.webhookLog.update({
-        where: { id: log.id },
-        data:  { status: "PROCESSED", processedAt: new Date() },
-      }).catch(() => {});
+      await prisma.webhookLog
+        .update({
+          where: { id: log.id },
+          data: { status: "PROCESSED", processedAt: new Date() },
+        })
+        .catch(() => {});
     }
 
     return { outcome: "processed", eventType, externalId, orderId };
-
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     logger.error("EasyOrders webhook: processing failed", {
       metadata: { eventType, orderId, externalId, error: errorMessage },
     });
     if (log) {
-      await prisma.webhookLog.update({
-        where: { id: log.id },
-        data:  { status: "FAILED", errorMessage: errorMessage.slice(0, 1000) },
-      }).catch(() => {});
+      await prisma.webhookLog
+        .update({
+          where: { id: log.id },
+          data: { status: "FAILED", errorMessage: errorMessage.slice(0, 1000) },
+        })
+        .catch(() => {});
     }
     return { outcome: "failed", eventType, externalId, orderId, errorMessage };
   }
