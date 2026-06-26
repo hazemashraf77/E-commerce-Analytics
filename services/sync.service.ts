@@ -483,7 +483,7 @@ export async function syncSingleShipment(storeId: string, trackingNumber: string
     const merchantRef = rawShipment.businessReference ?? rawShipment.order_id ?? "";
 
     const order = await prisma.order.findFirst({
-      where: { storeId, providerOrderId: merchantRef },
+  where: { storeId, provider: "EASYORDERS", providerOrderId: merchantRef },
       select: { id: true },
     });
     if (!order) {
