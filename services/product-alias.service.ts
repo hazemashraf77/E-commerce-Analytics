@@ -56,8 +56,12 @@ export async function createAlias(input: CreateAliasInput) {
 
   // Trigger resolution for the alias's owning product
   await resolveUnmappedItems(input.storeId, {
-    productId: input.productId,
-  }).catch((err) => {
+  productId: input.productId,
+  sku: input.aliasType === "sku" ? input.aliasName.trim() : undefined,
+  productName: input.aliasType === "name" ? input.aliasName.trim() : undefined,
+  provider: input.provider ?? undefined,
+  providerProductId: input.aliasType === "provider_id" ? input.aliasName.trim() : undefined,
+}).catch((err) => {
     logger.warn("Resolution after createAlias failed", { metadata: { error: String(err) } });
   });
 

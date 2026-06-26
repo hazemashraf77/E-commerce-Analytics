@@ -197,10 +197,13 @@ async function tryMapping(
 export async function resolveUnmappedItems(
   storeId: string,
   hint: {
-    productId?: string;       // resolve only items that would map to this product
-    sku?:       string;
-    externalIds?: Record<string, string>;
-  },
+  productId?: string;
+  sku?: string;
+  productName?: string;
+  provider?: string;
+  providerProductId?: string;
+  externalIds?: Record<string, string>;
+},
 ): Promise<{ resolved: number; failed: number }> {
   let resolved = 0;
   let failed   = 0;
@@ -211,14 +214,18 @@ export async function resolveUnmappedItems(
       storeId,
       status: "UNMAPPED",
       OR: [
-        ...(hint.sku ? [{ sku: hint.sku }] : []),
-        ...(hint.externalIds
-          ? Object.entries(hint.externalIds).map(([prov, ext]) => ({
-              provider: prov,
-              providerProductId: ext,
-            }))
-          : []),
-      ],
+  ...(hint.sku ? [{ sku: hint.sku }] : []),
+  ...(hint.productName ? [{ productName: hint.productName }] : []),
+  ...(hint.provider && hint.providerProductId
+    ? [{ provider: hint.provider, providerProductId: hint.providerProductId }]
+    : []),
+  ...(hint.externalIds
+    ? Object.entries(hint.externalIds).map(([prov, ext]) => ({
+        provider: prov,
+        providerProductId: ext,
+      }))
+    : []),
+],
     },
     take: 500, // bounded — large stores will iterate
   });
