@@ -6,9 +6,13 @@ import { prisma } from "@/lib/db/prisma";
 async function GETHandler(
   request: NextRequest,
   auth: AuthContext,
-  { params }: { params: { id: string } }
+  params?: Record<string, string>,
 ) {
-  const product = await prisma.product.findUnique({
+  if (!params?.id) {
+    return validationError("Product id required");
+  }
+
+  const product = await prisma.product.findFirst({
     where: {
       id: params.id,
       isDeleted: false,
