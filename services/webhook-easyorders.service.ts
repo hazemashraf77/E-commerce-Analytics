@@ -19,6 +19,7 @@ import type { OrderStatus, PaymentStatus, MarketingPlatform } from "@prisma/clie
 import { prisma } from "@/lib/db/prisma";
 import { createLogger } from "@/lib/logger";
 import { getServerEnv } from "@/lib/env";
+import { upsertProviderOrderItem } from "@/services/provider-order-item.service";
 
 const logger = createLogger("EasyOrdersWebhookService");
 
@@ -453,28 +454,21 @@ async function upsertOrderItem(
     }),
   );
 
-  const stagingExisting = await prisma.importStaging.findFirst({
-    where: { provider: "EASYORDERS", externalId },
-    select: { id: true },
-  });
-
-  if (stagingExisting) {
-    await prisma.importStaging.update({
-      where: { id: stagingExisting.id },
-      data: { rawPayload, processedAt: null, status: "PENDING", retryCount: 0 },
-    });
-  } else {
-    await prisma.importStaging.create({
-      data: {
-        provider: "EASYORDERS",
-        entityType: "ORDER_ITEM",
-        externalId,
-        rawPayload,
-        status: "PENDING",
-      },
-    });
+  await upsertProviderOrderItem({
+  storeId,
+  provider: "EASYORDERS",
+  providerOrderId,
+  orderId,
+  itemIndex: itemIdx,
+  providerProductId: provProductId || undefined,
+  sku: sku || undefined,
+  productName: productName || undefined,
+  quantity: isFinite(qtyRaw) ? qtyRaw : 1,
+  unitPrice: isFinite(priceRaw) ? priceRaw : 0,
+  discount: isFinite(discRaw) ? discRaw : 0,
+  rawPayload,
+});
   }
-}
 
 // ── Main handler ───────────────────────────────────────────────────────────
 
