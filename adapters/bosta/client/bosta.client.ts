@@ -102,8 +102,17 @@ export class BostaClient {
       logger.debug("Fetching Bosta deliveries page", { metadata: { page, pageSize } });
 
       const response = await this.request<BostaListResponse<BostaRawShipment>>(
-        `/deliveries?${qs.toString()}`,
-      );
+  `/deliveries/search`,
+  {
+    method: "POST",
+    body: JSON.stringify({
+      page,
+      pageSize,
+      ...(params.state != null ? { state: params.state } : {}),
+      ...(params.updatedAfter ? { updatedAfter: params.updatedAfter } : {}),
+    }),
+  },
+);
 
       if (!response.success || !response.data?.list?.length) break;
       yield response.data.list;

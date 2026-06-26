@@ -63,7 +63,7 @@ export async function runSync(options: SyncOptions): Promise<SyncResult[]> {
   });
 
   results.push({
-    provider: "EAZY_ORDER",
+    provider: "EASYORDERS",
     scope: "orders",
     status: "skipped",
     recordsProcessed: 0,
@@ -74,11 +74,8 @@ export async function runSync(options: SyncOptions): Promise<SyncResult[]> {
 }
 
   if (providers.includes("BOSTA") && isIntegrationEnabled("BOSTA")) {
-    const bostaResults = await Promise.all([
-      syncBostaShipments(storeId, fullSync),
-      syncBostaSettlements(storeId, fullSync),
-    ]);
-    results.push(...bostaResults);
+    const bostaShipmentResult = await syncBostaShipments(storeId, fullSync);
+results.push(bostaShipmentResult);
   } else if (providers.includes("BOSTA")) {
     logger.warn("Bosta sync skipped — credentials not configured", { metadata: { storeId } });
     results.push({ provider: "BOSTA", scope: "shipments", status: "skipped", recordsProcessed: 0, recordsFailed: 0, errors: ["Credentials not configured"], durationMs: 0 });
@@ -96,7 +93,7 @@ export async function runSync(options: SyncOptions): Promise<SyncResult[]> {
 async function syncEasyOrders(storeId: string, fullSync: boolean): Promise<SyncResult> {
   const lockKey = `EAZY_ORDER:orders:${storeId}`;
   if (activeSyncs.has(lockKey)) {
-    return { provider: "EAZY_ORDER", scope: "orders", status: "skipped", recordsProcessed: 0, recordsFailed: 0, errors: ["Already running"], durationMs: 0 };
+    return { provider: "EASYORDERS", scope: "orders", status: "skipped", recordsProcessed: 0, recordsFailed: 0, errors: ["Already running"], durationMs: 0 };
   }
   activeSyncs.add(lockKey);
   const startMs = Date.now();
@@ -106,7 +103,7 @@ async function syncEasyOrders(storeId: string, fullSync: boolean): Promise<SyncR
 
   // Create sync job record
   const syncJob = await prisma.syncJob.create({
-    data: { storeId, provider: "EAZY_ORDER", status: "RUNNING", startedAt: new Date() },
+    data: { storeId, provider: "EASYORDERS", status: "RUNNING", startedAt: new Date() },
   }).catch(() => null);
 
   try {
@@ -134,7 +131,7 @@ async function syncEasyOrders(storeId: string, fullSync: boolean): Promise<SyncR
 
           // Upsert order (idempotent)
           await prisma.order.upsert({
-            where: { storeId_provider_providerOrderId: { storeId, provider: "EAZY_ORDER", providerOrderId: order.providerOrderId } },
+            where: { storeId_provider_providerOrderId: { storeId, provider: "EASYORDERS", providerOrderId: order.providerOrderId } },
             update: {
               orderStatus:    order.orderStatus,
               paymentStatus:  order.paymentStatus,
@@ -142,7 +139,7 @@ async function syncEasyOrders(storeId: string, fullSync: boolean): Promise<SyncR
             },
             create: {
               storeId:            order.storeId,
-              provider:           "EAZY_ORDER",
+              provider:           "EASYORDERS",
               providerOrderId:    order.providerOrderId,
               orderDate:          order.orderDate,
               customerShippingFee:order.customerShippingFee,
@@ -156,7 +153,7 @@ async function syncEasyOrders(storeId: string, fullSync: boolean): Promise<SyncR
 
           // Upsert order items
           const dbOrder = await prisma.order.findUnique({
-            where: { storeId_provider_providerOrderId: { storeId, provider: "EAZY_ORDER", providerOrderId: order.providerOrderId } },
+            where: { storeId_provider_providerOrderId: { storeId, provider: "EASYORDERS", providerOrderId: order.providerOrderId } },
             select: { id: true },
           });
 
@@ -224,7 +221,7 @@ async function syncEasyOrders(storeId: string, fullSync: boolean): Promise<SyncR
       }).catch(() => {});
     }
 
-    return { provider: "EAZY_ORDER", scope: "orders", status: "completed", recordsProcessed, recordsFailed, errors, durationMs: Date.now() - startMs };
+    return { provider: "EASYORDERS", scope: "orders", status: "completed", recordsProcessed, recordsFailed, errors, durationMs: Date.now() - startMs };
   } catch (err) {
     const msg = `EasyOrders sync failed: ${String(err)}`;
     logger.error(msg, { metadata: { storeId } });
@@ -232,7 +229,7 @@ async function syncEasyOrders(storeId: string, fullSync: boolean): Promise<SyncR
     if (syncJob) {
       await prisma.syncJob.update({ where: { id: syncJob.id }, data: { status: "FAILED", completedAt: new Date(), errorMessage: msg } }).catch(() => {});
     }
-    return { provider: "EAZY_ORDER", scope: "orders", status: "failed", recordsProcessed, recordsFailed, errors: [msg], durationMs: Date.now() - startMs };
+    return { provider: "EASYORDERS", scope: "orders", status: "failed", recordsProcessed, recordsFailed, errors: [msg], durationMs: Date.now() - startMs };
   } finally {
     activeSyncs.delete(lockKey);
   }
@@ -265,7 +262,7 @@ async function syncBostaShipments(storeId: string, fullSync: boolean): Promise<S
 
     // Build provider order ID → internal DB order ID map for this store
     const orders = await prisma.order.findMany({
-      where: { storeId, provider: "EAZY_ORDER" },
+      where: { storeId, provider: "EASYORDERS" },
       select: { id: true, providerOrderId: true },
     });
     const orderIdMap = new Map(orders.map(o => [o.providerOrderId, o.id]));
@@ -454,10 +451,10 @@ export async function syncSingleOrder(storeId: string, providerOrderId: string):
     const { order, items } = mapEazyOrderToCanonical(rawOrder, storeId);
 
     await prisma.order.upsert({
-      where: { storeId_provider_providerOrderId: { storeId, provider: "EAZY_ORDER", providerOrderId } },
+      where: { storeId_provider_providerOrderId: { storeId, provider: "EASYORDERS", providerOrderId } },
       update: { orderStatus: order.orderStatus, paymentStatus: order.paymentStatus, syncedAt: new Date() },
       create: {
-        storeId, provider: "EAZY_ORDER", providerOrderId: order.providerOrderId,
+        storeId, provider: "EASYORDERS", providerOrderId: order.providerOrderId,
         orderDate: order.orderDate, customerShippingFee: order.customerShippingFee,
         paymentMethod: order.paymentMethod, paymentStatus: order.paymentStatus,
         orderStatus: order.orderStatus, marketingSource: order.marketingSource ?? undefined,
