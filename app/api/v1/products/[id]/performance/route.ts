@@ -16,6 +16,10 @@ async function GETHandler(
     return validationError("Product id required");
   }
 
+  console.log("PARAMS:", params);
+console.log("PATH:", request.nextUrl.pathname);
+console.log("PRODUCT ID:", productId);
+
   const product = await prisma.product.findFirst({
     where: {
       id: productId,
