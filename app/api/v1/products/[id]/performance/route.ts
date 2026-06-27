@@ -23,7 +23,6 @@ async function GETHandler(
     return notFound("Product not found");
   }
 
-  
   const orderItems = await prisma.orderItem.findMany({
     where: {
       productId: product.id,

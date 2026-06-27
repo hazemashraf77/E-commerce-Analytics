@@ -12,6 +12,17 @@ async function GETHandler(
     return validationError("Product id required");
   }
 
+  console.log("SEARCHING FOR:", params.id);
+
+  console.log(
+  await prisma.product.findMany({
+    select: {
+      id: true,
+      isDeleted: true,
+    },
+  }),
+);
+
   const product = await prisma.product.findFirst({
     where: {
       id: params.id,

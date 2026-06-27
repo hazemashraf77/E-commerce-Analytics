@@ -56,6 +56,8 @@ export function withAuth(
 
     const routeParams = context?.params ? await context.params : undefined;
 
+    console.log("ROUTE PARAMS:", routeParams);
+
     try {
       // Step 1: Authentication
       // Preview bypass: if Supabase URL is placeholder, inject a mock session
