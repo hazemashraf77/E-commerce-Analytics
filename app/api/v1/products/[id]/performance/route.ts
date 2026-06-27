@@ -8,16 +8,20 @@ async function GETHandler(
   auth: AuthContext,
   params?: Record<string, string>,
 ) {
-  if (!params?.id) {
-    return validationError("Product id required");
-  }
+  const productId =
+  params?.id ??
+  request.nextUrl.pathname.split("/").at(-2);
 
-  const product = await prisma.product.findFirst({
-    where: {
-      id: params.id,
-      isDeleted: false,
-    },
-  });
+if (!productId) {
+  return validationError("Product id required");
+}
+
+const product = await prisma.product.findFirst({
+  where: {
+    id: productId,
+    isDeleted: false,
+  },
+});
 
   if (!product) {
     return notFound("Product not found");
