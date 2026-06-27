@@ -169,7 +169,7 @@ export async function computeProductPerformance(
       amount: true,
       order: {
         select: {
-          items: {
+        orderItems: {
             select: {
               productId: true,
               quantity: true,
@@ -283,7 +283,7 @@ export async function computeProductPerformance(
   const adjMap = new Map<string, AdjAgg>();
 
   for (const adj of adjustments) {
-    const items = adj.order?.items ?? [];
+    const items = adj.order?.orderItems ?? [];
     if (items.length === 0) continue;
 
     const orderTotal = items.reduce((sum, item) => {
