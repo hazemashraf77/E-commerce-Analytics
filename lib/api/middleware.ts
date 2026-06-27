@@ -50,9 +50,11 @@ export function withAuth(
 ) {
   return async (
     request: NextRequest,
-    context?: { params?: Record<string, string> },
+    context?: { params?: Record<string, string> | Promise<Record<string, string>> },
   ): Promise<NextResponse> => {
     const requestId = generateRequestId();
+
+    const routeParams = context?.params ? await context.params : undefined;
 
     try {
       // Step 1: Authentication
@@ -67,7 +69,7 @@ export function withAuth(
           role: "ADMINISTRATOR",
           requestId,
         };
-        return await handler(request, previewAuth, context?.params);
+        return await handler(request, previewAuth, routeParams);
       }
 
       const supabase = await createSupabaseServerClient();
@@ -120,7 +122,7 @@ export function withAuth(
         });
       }
 
-      return await handler(request, auth, context?.params);
+      return await handler(request, auth, routeParams);
     } catch (err) {
       logger.error("API handler error", {
         requestId,

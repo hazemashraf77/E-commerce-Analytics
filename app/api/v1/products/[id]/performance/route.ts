@@ -8,21 +8,13 @@ async function GETHandler(
   auth: AuthContext,
   params?: Record<string, string>,
 ) {
-  const segments = request.nextUrl.pathname.split("/").filter(Boolean);
-  const productsIndex = segments.indexOf("products");
-  const productId = params?.id ?? segments[productsIndex + 1];
-
-  if (!productId) {
+  if (!params?.id) {
     return validationError("Product id required");
   }
 
-  console.log("PARAMS:", params);
-console.log("PATH:", request.nextUrl.pathname);
-console.log("PRODUCT ID:", productId);
-
   const product = await prisma.product.findFirst({
     where: {
-      id: productId,
+      id: params.id,
       isDeleted: false,
     },
   });
@@ -31,6 +23,7 @@ console.log("PRODUCT ID:", productId);
     return notFound("Product not found");
   }
 
+  
   const orderItems = await prisma.orderItem.findMany({
     where: {
       productId: product.id,
