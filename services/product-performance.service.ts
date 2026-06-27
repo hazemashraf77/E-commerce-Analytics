@@ -18,33 +18,44 @@
 import { prisma } from "@/lib/db/prisma";
 import { createLogger } from "@/lib/logger";
 import {
-  calcRevenue, calcGrossProfit, calcNetProfit, calcTrueProfit,
-  calcContributionMargin, calcProfitMarginPct, calcProfitLeakage,
-  calcAdvertisingCpa, calcDeliveredCpa, calcTrueCpa,
-  calcDeliveredRoas, calcTrueRoas, calcPpap,
-  calcDeliveryRate, calcReturnRate, calcRefusalRate,
-  calcTrueShippingCost, calcShippingCostPerOrder,
-  calcInventoryValue, calcInventoryVelocity, calcDaysRemaining,
-  calcCashLocked, classifyInventoryStatus,
-  toDimensional,
+  calcRevenue,
+  calcGrossProfit,
+  calcNetProfit,
+  calcTrueProfit,
+  calcContributionMargin,
+  calcProfitMarginPct,
+  calcProfitLeakage,
+  calcAdvertisingCpa,
+  calcDeliveredCpa,
+  calcTrueCpa,
+  calcDeliveredRoas,
+  calcTrueRoas,
+  calcPpap,
+  calcDeliveryRate,
+  calcReturnRate,
+  calcRefusalRate,
+  calcTrueShippingCost,
+  calcShippingCostPerOrder,
+  calcInventoryVelocity,
+  calcDaysRemaining,
+  classifyInventoryStatus,
   type ProductKpiRow,
 } from "@/modules/formula-engine/application/kpi.calculator";
 
 const logger = createLogger("ProductPerformanceService");
 
-
 export interface ProductPerformanceInput {
   storeId: string;
-  from:    Date;
-  to:      Date;
+  from: Date;
+  to: Date;
 }
 
 export interface ProductPerformanceResult {
-  products:      ProductKpiRow[];
-  computedAt:    string;
-  periodDays:    number;
-  periodMonths:  number;
-  source:        "DB_KPI_CALCULATOR";
+  products: ProductKpiRow[];
+  computedAt: string;
+  periodDays: number;
+  periodMonths: number;
+  source: "DB_KPI_CALCULATOR";
 }
 
 /**
@@ -65,28 +76,34 @@ export async function computeProductPerformance(
 
   // ── 1. Load all active products ──────────────────────────────────────────
   const products = await prisma.product.findMany({
-  where: {
-  storeId,
-  isDeleted: false,
-},
+    where: {
+      storeId,
+      isDeleted: false,
+    },
     select: {
-      id: true, sku: true, name: true, category: true, imageUrl: true,
-      defaultSellingPrice: true, unitProductCost: true, packagingCost: true,
+      id: true,
+      sku: true,
+      name: true,
+      category: true,
+      imageUrl: true,
+      defaultSellingPrice: true,
+      unitProductCost: true,
+      packagingCost: true,
       minimumStockThreshold: true,
     },
   });
 
   if (products.length === 0) {
-  return {
-    products: [],
-    computedAt: new Date().toISOString(),
-    periodDays,
-    periodMonths,
-    source: "DB_KPI_CALCULATOR",
-  };
-}
+    return {
+      products: [],
+      computedAt: new Date().toISOString(),
+      periodDays,
+      periodMonths,
+      source: "DB_KPI_CALCULATOR",
+    };
+  }
 
-  const productIds = products.map(p => p.id);
+  const productIds = products.map((p) => p.id);
 
   // ── 2. Load OrderItem aggregates within period ────────────────────────────
   // Orders are filtered by orderDate. Shipment status is joined for lifecycle counts.
@@ -96,15 +113,24 @@ export async function computeProductPerformance(
       order: { storeId, orderDate: { gte: from, lte: to } },
     },
     select: {
-      id: true, productId: true, quantity: true, unitPrice: true,
-      discount: true, fifoCost: true, allocatedRevenue: true,
+      id: true,
+      productId: true,
+      quantity: true,
+      unitPrice: true,
+      discount: true,
+      fifoCost: true,
+      allocatedRevenue: true,
       order: {
         select: {
-          id: true, orderStatus: true, customerShippingFee: true,
+          id: true,
+          orderStatus: true,
+          customerShippingFee: true,
           shipment: {
             select: {
-              shipmentStatus: true, actualShippingCost: true,
-              deliveryDate: true, returnDate: true,
+              shipmentStatus: true,
+              actualShippingCost: true,
+              deliveryDate: true,
+              returnDate: true,
             },
           },
         },
@@ -131,12 +157,29 @@ export async function computeProductPerformance(
   // ── 5. Load FinancialAdjustments for refunds/compensations ───────────────
   const adjustments = await prisma.financialAdjustment.findMany({
     where: {
-      storeId,
-      adjustmentDate: { gte: from, lte: to },
-      adjustmentType: { in: ["REFUND", "COMPENSATION"] },
-      isDeleted: false,
+      occurredAt: {
+        gte: from,
+        lte: to,
+      },
+      order: {
+        storeId,
+      },
     },
-    select: { productId: true, adjustmentType: true, amount: true, direction: true },
+    select: {
+      amount: true,
+      order: {
+        select: {
+          items: {
+            select: {
+              productId: true,
+              quantity: true,
+              unitPrice: true,
+              discount: true,
+            },
+          },
+        },
+      },
+    },
   });
 
   // ── 6. Load expenses for net profit / true profit ────────────────────────
@@ -150,71 +193,76 @@ export async function computeProductPerformance(
       _sum: { amount: true },
     }),
   ]);
-  const storeFixedExp    = Number(fixedExpenses._sum.amount   ?? 0);
+  const storeFixedExp = Number(fixedExpenses._sum.amount ?? 0);
   const storeVariableExp = Number(variableExpenses._sum.amount ?? 0);
 
   // ── 7. Build per-product aggregation maps ────────────────────────────────
   type OrderAgg = {
-    orderIds:         Set<string>;
-    ordersConfirmed:  number;
-    ordersShipped:    number;
-    ordersDelivered:  number;
-    ordersReturned:   number;
-    ordersRefused:    number;
-    unitsDelivered:   number;
-    grossRevenue:     number;         // sum(qty * unitPrice - discount)
+    orderIds: Set<string>;
+    ordersConfirmed: number;
+    ordersShipped: number;
+    ordersDelivered: number;
+    ordersReturned: number;
+    ordersRefused: number;
+    unitsDelivered: number;
+    grossRevenue: number; // sum(qty * unitPrice - discount)
     customerShipFees: number;
-    fifoCost:         number;
-    shipCostOutbound: number;         // from Bosta actualShippingCost
-    shipCostReturn:   number;
+    fifoCost: number;
+    shipCostOutbound: number; // from Bosta actualShippingCost
+    shipCostReturn: number;
   };
 
   const aggMap = new Map<string, OrderAgg>();
   for (const p of products) {
     aggMap.set(p.id, {
-      orderIds:         new Set(),
-      ordersConfirmed:  0,
-      ordersShipped:    0,
-      ordersDelivered:  0,
-      ordersReturned:   0,
-      ordersRefused:    0,
-      unitsDelivered:   0,
-      grossRevenue:     0,
+      orderIds: new Set(),
+      ordersConfirmed: 0,
+      ordersShipped: 0,
+      ordersDelivered: 0,
+      ordersReturned: 0,
+      ordersRefused: 0,
+      unitsDelivered: 0,
+      grossRevenue: 0,
       customerShipFees: 0,
-      fifoCost:         0,
+      fifoCost: 0,
       shipCostOutbound: 0,
-      shipCostReturn:   0,
+      shipCostReturn: 0,
     });
   }
 
   for (const oi of orderItems) {
     const a = aggMap.get(oi.productId);
     if (!a) continue;
-    const qty      = Number(oi.quantity);
-    const price    = Number(oi.unitPrice);
-    const disc     = Number(oi.discount);
-    const lineRev  = qty * price - disc;
+    const qty = Number(oi.quantity);
+    const price = Number(oi.unitPrice);
+    const disc = Number(oi.discount);
+    const lineRev = qty * price - disc;
     const shipment = oi.order.shipment;
-    const status   = oi.order.orderStatus;
-    const sStatus  = shipment?.shipmentStatus ?? null;
+    const status = oi.order.orderStatus;
+    const sStatus = shipment?.shipmentStatus ?? null;
 
     a.orderIds.add(oi.order.id);
-    a.grossRevenue     += lineRev;
+    a.grossRevenue += lineRev;
     a.customerShipFees += Number(oi.order.customerShippingFee ?? 0) / Math.max(1, 1); // one shipment fee per order, divided if needed in future
 
     // FIFO cost from orderItem (set by inventory engine) or fallback to product cost
     a.fifoCost += Number(oi.fifoCost ?? 0);
 
     // Lifecycle counts per OrderStatus / ShipmentStatus
-    if (status === "CONFIRMED" || status === "PROCESSING" || status === "READY_TO_SHIP" ||
-        status === "SHIPPED"   || status === "DELIVERED"   || status === "CLOSED") {
+    if (
+      status === "CONFIRMED" ||
+      status === "PROCESSING" ||
+      status === "READY_TO_SHIP" ||
+      status === "SHIPPED" ||
+      status === "DELIVERED" ||
+      status === "CLOSED"
+    ) {
       a.ordersConfirmed++;
     }
     if (status === "SHIPPED" || status === "DELIVERED" || status === "CLOSED") {
       a.ordersShipped++;
     }
-    if (status === "DELIVERED" || status === "CLOSED" ||
-        sStatus === "DELIVERED") {
+    if (status === "DELIVERED" || status === "CLOSED" || sStatus === "DELIVERED") {
       a.ordersDelivered++;
       a.unitsDelivered += qty;
       a.shipCostOutbound += Number(shipment?.actualShippingCost ?? 0);
@@ -230,15 +278,33 @@ export async function computeProductPerformance(
   }
 
   // ── 8. Per-product adjustments (refunds, compensations) ──────────────────
-  type AdjAgg = { refunds: number; compensations: number };
+  type AdjAgg = { refunds: number; compensations: number; manual: number };
+
   const adjMap = new Map<string, AdjAgg>();
+
   for (const adj of adjustments) {
-    if (!adj.productId) continue;
-    const existing = adjMap.get(adj.productId) ?? { refunds: 0, compensations: 0 };
-    const amount = Number(adj.amount);
-    if (adj.adjustmentType === "REFUND")        existing.refunds       += amount;
-    if (adj.adjustmentType === "COMPENSATION")  existing.compensations += amount;
-    adjMap.set(adj.productId, existing);
+    const items = adj.order?.items ?? [];
+    if (items.length === 0) continue;
+
+    const orderTotal = items.reduce((sum, item) => {
+      return sum + Number(item.quantity) * Number(item.unitPrice) - Number(item.discount ?? 0);
+    }, 0);
+
+    for (const item of items) {
+      const lineTotal = Number(item.quantity) * Number(item.unitPrice) - Number(item.discount ?? 0);
+
+      const share = orderTotal > 0 ? lineTotal / orderTotal : 1 / items.length;
+      const allocatedAmount = Number(adj.amount) * share;
+
+      const existing = adjMap.get(item.productId) ?? {
+        refunds: 0,
+        compensations: 0,
+        manual: 0,
+      };
+
+      existing.manual += allocatedAmount;
+      adjMap.set(item.productId, existing);
+    }
   }
 
   // ── 9. Inventory map ──────────────────────────────────────────────────────
@@ -246,7 +312,7 @@ export async function computeProductPerformance(
   const invMap = new Map<string, InvAgg>();
   for (const layer of inventoryLayers) {
     const existing = invMap.get(layer.productId) ?? { stock: 0, value: 0 };
-    const qty  = Number(layer.remainingQuantity);
+    const qty = Number(layer.remainingQuantity);
     const cost = Number(layer.unitCost);
     existing.stock += qty;
     existing.value += qty * cost;
@@ -257,34 +323,40 @@ export async function computeProductPerformance(
   const totalDelivered = Array.from(aggMap.values()).reduce((s, a) => s + a.ordersDelivered, 0);
 
   // ── 11. Build ProductKpiRow for each product ──────────────────────────────
-  const rows: ProductKpiRow[] = products.map(p => {
-    const a   = aggMap.get(p.id) ?? {
-      orderIds: new Set(), ordersConfirmed:0, ordersShipped:0, ordersDelivered:0,
-      ordersReturned:0, ordersRefused:0, unitsDelivered:0, grossRevenue:0,
-      customerShipFees:0, fifoCost:0, shipCostOutbound:0, shipCostReturn:0,
+  const rows: ProductKpiRow[] = products.map((p) => {
+    const a = aggMap.get(p.id) ?? {
+      orderIds: new Set(),
+      ordersConfirmed: 0,
+      ordersShipped: 0,
+      ordersDelivered: 0,
+      ordersReturned: 0,
+      ordersRefused: 0,
+      unitsDelivered: 0,
+      grossRevenue: 0,
+      customerShipFees: 0,
+      fifoCost: 0,
+      shipCostOutbound: 0,
+      shipCostReturn: 0,
     };
-    const adj = adjMap.get(p.id) ?? { refunds: 0, compensations: 0 };
+    const adj = adjMap.get(p.id) ?? { refunds: 0, compensations: 0, manual: 0 };
     const inv = invMap.get(p.id) ?? { stock: 0, value: 0 };
 
     // Allocate store-level ad spend by share of delivered orders (Allocation Engine)
-    const productDeliveredShare = totalDelivered > 0
-      ? a.ordersDelivered / totalDelivered
-      : 0;
+    const productDeliveredShare = totalDelivered > 0 ? a.ordersDelivered / totalDelivered : 0;
     const allocatedAdSpend = storeAdSpend * productDeliveredShare;
 
     // Allocate store-level expenses by same share
-    const allocatedFixed    = storeFixedExp    * productDeliveredShare;
+    const allocatedFixed = storeFixedExp * productDeliveredShare;
     const allocatedVariable = storeVariableExp * productDeliveredShare;
     const allocatedExpenses = allocatedFixed + allocatedVariable;
 
     // Product packaging cost per unit
     const packCostPerUnit = Number(p.packagingCost ?? 0);
-    const packCostTotal   = packCostPerUnit * a.unitsDelivered;
+    const packCostTotal = packCostPerUnit * a.unitsDelivered;
 
     // Use FIFO cost if populated; otherwise fall back to product unitProductCost
-    const effectiveCogs = a.fifoCost > 0
-      ? a.fifoCost
-      : Number(p.unitProductCost ?? 0) * a.unitsDelivered;
+    const effectiveCogs =
+      a.fifoCost > 0 ? a.fifoCost : Number(p.unitProductCost ?? 0) * a.unitsDelivered;
 
     // Revenue = Formula FIN-001: product revenue + customer shipping fee
     const revenue = calcRevenue(a.grossRevenue, a.customerShipFees);
@@ -313,7 +385,7 @@ export async function computeProductPerformance(
       adj.refunds,
       adj.compensations,
       allocatedExpenses,
-      0, // manual adjustments (FinancialAdjustment MANUAL type — future)
+      adj.manual, // manual adjustments (FinancialAdjustment MANUAL type — future)
     );
 
     const contributionMargin = calcContributionMargin(
@@ -327,37 +399,33 @@ export async function computeProductPerformance(
     const profitMarginPct = calcProfitMarginPct(trueProfit, revenue);
 
     const profitLeakage = calcProfitLeakage({
-  returnShippingCost: a.shipCostReturn,
-  refusedShippingCost: 0,
-  refunds: adj.refunds,
-  compensations: adj.compensations,
-  deadStockValue: 0,
-  excessAdSpendOnNonDelivered: 0,
-});
+      returnShippingCost: a.shipCostReturn,
+      refusedShippingCost: 0,
+      refunds: adj.refunds,
+      compensations: adj.compensations,
+      deadStockValue: 0,
+      excessAdSpendOnNonDelivered: 0,
+    });
 
     // Marketing KPIs
-    const ordersCreated   = a.orderIds.size;
-    const advertisingCpa  = calcAdvertisingCpa(allocatedAdSpend, ordersCreated);
-    const deliveredCpa    = calcDeliveredCpa(allocatedAdSpend, a.ordersDelivered);
-    const trueCpa         = calcTrueCpa(allocatedAdSpend, a.ordersDelivered);
-    const deliveredRoas   = calcDeliveredRoas(revenue, allocatedAdSpend);
-    const trueRoas        = calcTrueRoas(trueProfit, allocatedAdSpend);
-    const ppap            = calcPpap(trueProfit, allocatedAdSpend);
+    const ordersCreated = a.orderIds.size;
+    const advertisingCpa = calcAdvertisingCpa(allocatedAdSpend, ordersCreated);
+    const deliveredCpa = calcDeliveredCpa(allocatedAdSpend, a.ordersDelivered);
+    const trueCpa = calcTrueCpa(allocatedAdSpend, a.ordersDelivered);
+    const deliveredRoas = calcDeliveredRoas(revenue, allocatedAdSpend);
+    const trueRoas = calcTrueRoas(trueProfit, allocatedAdSpend);
+    const ppap = calcPpap(trueProfit, allocatedAdSpend);
 
     // Shipping KPIs
     const deliveryRate = calcDeliveryRate(a.ordersDelivered, a.ordersShipped);
-    const returnRate   = calcReturnRate(a.ordersReturned, a.ordersDelivered);
-    const refusalRate  = calcRefusalRate(a.ordersRefused, a.ordersShipped);
+    const returnRate = calcReturnRate(a.ordersReturned, a.ordersDelivered);
+    const refusalRate = calcRefusalRate(a.ordersRefused, a.ordersShipped);
 
-   const trueShipCost = calcTrueShippingCost(
-  a.shipCostOutbound,
-  a.shipCostReturn,
-  0
-);
-    const shipPerOrder = calcShippingCostPerOrder(trueShipCost, a.ordersShipped);
+    const trueShipCost = calcTrueShippingCost(a.shipCostOutbound, a.shipCostReturn, 0);
+    calcShippingCostPerOrder(trueShipCost, a.ordersShipped);
 
     // Inventory KPIs
-    const velocity     = calcInventoryVelocity(a.unitsDelivered, periodDays);
+    const velocity = calcInventoryVelocity(a.unitsDelivered, periodDays);
     const daysRemaining = calcDaysRemaining(inv.stock, velocity);
     const cashLocked = inv.stock * Number(p.unitProductCost ?? 0);
     const inventoryStatus = classifyInventoryStatus(
@@ -367,30 +435,30 @@ export async function computeProductPerformance(
     );
 
     // Per-order / per-item dimensional views
-    const revenuePerOrder  = ordersCreated > 0    ? revenue / ordersCreated          : null;
-    const profitPerOrder   = a.ordersDelivered > 0 ? trueProfit / a.ordersDelivered  : null;
-    const revenuePerItem   = a.unitsDelivered > 0  ? revenue / a.unitsDelivered      : null;
-    const profitPerItem    = a.unitsDelivered > 0  ? trueProfit / a.unitsDelivered   : null;
+    const revenuePerOrder = ordersCreated > 0 ? revenue / ordersCreated : null;
+    const profitPerOrder = a.ordersDelivered > 0 ? trueProfit / a.ordersDelivered : null;
+    const revenuePerItem = a.unitsDelivered > 0 ? revenue / a.unitsDelivered : null;
+    const profitPerItem = a.unitsDelivered > 0 ? trueProfit / a.unitsDelivered : null;
 
     return {
-      productId:          p.id,
-      productName:        p.name,
-      sku:                p.sku,
+      productId: p.id,
+      productName: p.name,
+      sku: p.sku,
       // Lifecycle — Order counts
       ordersCreated,
-      ordersConfirmed:    a.ordersConfirmed,
-      ordersShipped:      a.ordersShipped,
-      ordersDelivered:    a.ordersDelivered,
-      ordersReturned:     a.ordersReturned,
-      ordersRefused:      a.ordersRefused,
-      itemsDelivered:     a.unitsDelivered,
+      ordersConfirmed: a.ordersConfirmed,
+      ordersShipped: a.ordersShipped,
+      ordersDelivered: a.ordersDelivered,
+      ordersReturned: a.ordersReturned,
+      ordersRefused: a.ordersRefused,
+      itemsDelivered: a.unitsDelivered,
       // Financial
       revenue,
-      cogs:               effectiveCogs,
-      packagingCost:      packCostTotal,
-      shippingCost:       a.shipCostOutbound,
+      cogs: effectiveCogs,
+      packagingCost: packCostTotal,
+      shippingCost: a.shipCostOutbound,
       returnShippingCost: a.shipCostReturn,
-      adSpend:            allocatedAdSpend,
+      adSpend: allocatedAdSpend,
       grossProfit,
       netProfit,
       trueProfit,
@@ -414,8 +482,8 @@ export async function computeProductPerformance(
       revenuePerItem,
       profitPerItem,
       // Inventory
-      stockAvailable:   inv.stock,
-      inventoryValue:   inv.value,
+      stockAvailable: inv.stock,
+      inventoryValue: inv.value,
       daysRemaining,
       inventoryStatus,
       cashLocked,
@@ -427,10 +495,10 @@ export async function computeProductPerformance(
   });
 
   return {
-  products: rows,
-  computedAt: new Date().toISOString(),
-  periodDays,
-  periodMonths,
-  source: "DB_KPI_CALCULATOR",
-};
+    products: rows,
+    computedAt: new Date().toISOString(),
+    periodDays,
+    periodMonths,
+    source: "DB_KPI_CALCULATOR",
+  };
 }
