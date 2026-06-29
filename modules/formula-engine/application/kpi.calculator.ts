@@ -23,6 +23,24 @@ export interface ProductKpiRow {
   productId: string;
   productName: string;
   sku: string;
+  imageUrl: string | null;
+category: string | null;
+defaultSellingPrice: number;
+
+// EasyOrders lifecycle
+ordersNew: number;
+ordersPending: number;
+ordersCancelled: number;
+
+// Bosta lifecycle
+bostaNew: number;
+bostaPicked: number;
+bostaInTransit: number;
+bostaOutForDelivery: number;
+bostaDelivered: number;
+bostaReturned: number;
+bostaRefused: number;
+bostaExchange: number;
   // Lifecycle counts
   ordersCreated: number;
   ordersConfirmed: number;

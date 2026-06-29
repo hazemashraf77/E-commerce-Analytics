@@ -1,6 +1,6 @@
 /**
  * GET /api/v1/store
- * Returns the first (and currently only) store.
+ * Returns the first active store.
  * Used by the Homepage to resolve the storeId for API calls.
  * Auth: READ_ONLY
  */
@@ -11,12 +11,16 @@ import { prisma } from "@/lib/db/prisma";
 
 async function handler(_req: NextRequest, auth: AuthContext) {
   const store = await prisma.store.findFirst({
-    select: { id: true, name: true, currency: true, timeZone: true, status: true },
-  }).catch(() => null);
-
-  if (!store) {
-    return ok(null, { requestId: auth.requestId });
-  }
+    where: { status: "ACTIVE" },
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      name: true,
+      currency: true,
+      timeZone: true,
+      status: true,
+    },
+  });
 
   return ok(store, { requestId: auth.requestId });
 }

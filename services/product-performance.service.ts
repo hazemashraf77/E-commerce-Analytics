@@ -198,36 +198,67 @@ export async function computeProductPerformance(
 
   // ── 7. Build per-product aggregation maps ────────────────────────────────
   type OrderAgg = {
-    orderIds: Set<string>;
-    ordersConfirmed: number;
-    ordersShipped: number;
-    ordersDelivered: number;
-    ordersReturned: number;
-    ordersRefused: number;
-    unitsDelivered: number;
-    grossRevenue: number; // sum(qty * unitPrice - discount)
-    customerShipFees: number;
-    fifoCost: number;
-    shipCostOutbound: number; // from Bosta actualShippingCost
-    shipCostReturn: number;
-  };
+  orderIds: Set<string>;
+
+  // EasyOrders lifecycle
+  ordersNew: number;
+  ordersPending: number;
+  ordersConfirmed: number;
+  ordersCancelled: number;
+
+  // Bosta lifecycle
+  bostaNew: number;
+  bostaPicked: number;
+  bostaInTransit: number;
+  bostaOutForDelivery: number;
+  bostaDelivered: number;
+  bostaReturned: number;
+  bostaRefused: number;
+  bostaExchange: number;
+
+  // Existing totals
+  ordersShipped: number;
+  ordersDelivered: number;
+  ordersReturned: number;
+  ordersRefused: number;
+  unitsDelivered: number;
+  grossRevenue: number;
+  customerShipFees: number;
+  fifoCost: number;
+  shipCostOutbound: number;
+  shipCostReturn: number;
+};
 
   const aggMap = new Map<string, OrderAgg>();
   for (const p of products) {
     aggMap.set(p.id, {
-      orderIds: new Set(),
-      ordersConfirmed: 0,
-      ordersShipped: 0,
-      ordersDelivered: 0,
-      ordersReturned: 0,
-      ordersRefused: 0,
-      unitsDelivered: 0,
-      grossRevenue: 0,
-      customerShipFees: 0,
-      fifoCost: 0,
-      shipCostOutbound: 0,
-      shipCostReturn: 0,
-    });
+  orderIds: new Set(),
+
+  ordersNew: 0,
+  ordersPending: 0,
+  ordersConfirmed: 0,
+  ordersCancelled: 0,
+
+  bostaNew: 0,
+  bostaPicked: 0,
+  bostaInTransit: 0,
+  bostaOutForDelivery: 0,
+  bostaDelivered: 0,
+  bostaReturned: 0,
+  bostaRefused: 0,
+  bostaExchange: 0,
+
+  ordersShipped: 0,
+  ordersDelivered: 0,
+  ordersReturned: 0,
+  ordersRefused: 0,
+  unitsDelivered: 0,
+  grossRevenue: 0,
+  customerShipFees: 0,
+  fifoCost: 0,
+  shipCostOutbound: 0,
+  shipCostReturn: 0,
+});
   }
 
   for (const oi of orderItems) {
@@ -240,6 +271,23 @@ export async function computeProductPerformance(
     const shipment = oi.order.shipment;
     const status = oi.order.orderStatus;
     const sStatus = shipment?.shipmentStatus ?? null;
+
+    // EasyOrders lifecycle
+if (status === "NEW") a.ordersNew++;
+if (status === "PENDING" || status === "PROCESSING" || status === "READY_TO_SHIP") {
+  a.ordersPending++;
+}
+if (status === "CANCELLED") a.ordersCancelled++;
+
+// Bosta lifecycle
+if (sStatus === "NEW") a.bostaNew++;
+if (sStatus === "PICKED_UP" || sStatus === "PICKED") a.bostaPicked++;
+if (sStatus === "IN_TRANSIT") a.bostaInTransit++;
+if (sStatus === "OUT_FOR_DELIVERY") a.bostaOutForDelivery++;
+if (sStatus === "DELIVERED") a.bostaDelivered++;
+if (sStatus === "RETURNED" || sStatus === "EXPECTED_RETURN") a.bostaReturned++;
+if (sStatus === "DELIVERY_FAILED" || sStatus === "REFUSED") a.bostaRefused++;
+if (sStatus === "EXCHANGE" || sStatus === "EXCHANGED") a.bostaExchange++;
 
     a.orderIds.add(oi.order.id);
     a.grossRevenue += lineRev;
@@ -324,20 +372,35 @@ export async function computeProductPerformance(
 
   // ── 11. Build ProductKpiRow for each product ──────────────────────────────
   const rows: ProductKpiRow[] = products.map((p) => {
-    const a = aggMap.get(p.id) ?? {
-      orderIds: new Set(),
-      ordersConfirmed: 0,
-      ordersShipped: 0,
-      ordersDelivered: 0,
-      ordersReturned: 0,
-      ordersRefused: 0,
-      unitsDelivered: 0,
-      grossRevenue: 0,
-      customerShipFees: 0,
-      fifoCost: 0,
-      shipCostOutbound: 0,
-      shipCostReturn: 0,
-    };
+  const a = aggMap.get(p.id) ?? {
+    orderIds: new Set<string>(),
+
+    ordersNew: 0,
+    ordersPending: 0,
+    ordersConfirmed: 0,
+    ordersCancelled: 0,
+
+    bostaNew: 0,
+    bostaPicked: 0,
+    bostaInTransit: 0,
+    bostaOutForDelivery: 0,
+    bostaDelivered: 0,
+    bostaReturned: 0,
+    bostaRefused: 0,
+    bostaExchange: 0,
+
+    ordersShipped: 0,
+    ordersDelivered: 0,
+    ordersReturned: 0,
+    ordersRefused: 0,
+    unitsDelivered: 0,
+    grossRevenue: 0,
+    customerShipFees: 0,
+    fifoCost: 0,
+    shipCostOutbound: 0,
+    shipCostReturn: 0,
+  };
+
     const adj = adjMap.get(p.id) ?? { refunds: 0, compensations: 0, manual: 0 };
     const inv = invMap.get(p.id) ?? { stock: 0, value: 0 };
 
@@ -441,9 +504,24 @@ export async function computeProductPerformance(
     const profitPerItem = a.unitsDelivered > 0 ? trueProfit / a.unitsDelivered : null;
 
     return {
-      productId: p.id,
-      productName: p.name,
-      sku: p.sku,
+    productId: p.id,
+    productName: p.name,
+    sku: p.sku,
+    imageUrl: p.imageUrl,
+    category: p.category,
+    defaultSellingPrice: Number(p.defaultSellingPrice ?? 0),
+    ordersNew: a.ordersNew,
+ordersPending: a.ordersPending,
+ordersCancelled: a.ordersCancelled,
+
+bostaNew: a.bostaNew,
+bostaPicked: a.bostaPicked,
+bostaInTransit: a.bostaInTransit,
+bostaOutForDelivery: a.bostaOutForDelivery,
+bostaDelivered: a.bostaDelivered,
+bostaReturned: a.bostaReturned,
+bostaRefused: a.bostaRefused,
+bostaExchange: a.bostaExchange,
       // Lifecycle — Order counts
       ordersCreated,
       ordersConfirmed: a.ordersConfirmed,

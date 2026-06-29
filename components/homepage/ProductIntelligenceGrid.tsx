@@ -175,20 +175,37 @@ export function ProductIntelligenceGrid({ t, locale, dimMode, products, search, 
             <tr className="bg-gray-50 border-b border-gray-100">
               <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400 sticky left-0 bg-gray-50 z-10 whitespace-nowrap">{t.col.product}</th>
               {tab === 0 && <>
-                <TermTip term="delivered" label={t.col.delivered} tip={t.terms.delivered} />
-                <TermTip term="rejected"  label={t.col.rejected}  tip={t.terms.rejected} />
-                <TermTip term="returning" label={t.col.returning} tip={t.terms.returning} />
-                <TermTip term="returned"  label={t.col.returned}  tip={t.terms.returned} />
-                <TermTip term="exchange"  label={t.col.exchange}  tip={t.terms.exchange} />
-                <TermTip term="refund"    label={t.col.refund}    tip={t.terms.refund} />
-                <TermTip term="pending"   label={t.col.pending}   tip={t.terms.pending} />
-                <th className="px-2 py-2 text-left text-xs font-semibold text-gray-400">{t.col.revenue}</th>
-                <th className="px-2 py-2 text-left text-xs font-semibold text-gray-400">{t.col.totalCost}</th>
-                <th className="px-2 py-2 text-left text-xs font-semibold text-gray-400">{t.col.trueProfit}</th>
-                <th className="px-2 py-2 text-left text-xs font-semibold text-gray-400">{t.col.margin}</th>
-                <th className="px-2 py-2 text-left text-xs font-semibold text-gray-400">{t.col.health}</th>
-                <th className="px-2 py-2 text-left text-xs font-semibold text-gray-400">{t.col.alert}</th>
-              </>}
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">جديد</th>
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">معلق</th>
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">مؤكد</th>
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">ملغي</th>
+
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">Bosta New</th>
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">Picked</th>
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">In Transit</th>
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">OFD</th>
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.delivered}</th>
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">Refused</th>
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">Returned</th>
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">Exchange</th>
+
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.revenue}</th>
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.cogs}</th>
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.shipping}</th>
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.returnShip}</th>
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.totalCost}</th>
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.trueProfit}</th>
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.margin}</th>
+
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.adSpend}</th>
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.trueCpa}</th>
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.trueRoas}</th>
+
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.stock}</th>
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.days}</th>
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.health}</th>
+  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.alert}</th>
+</>}
               {tab === 1 && <>
                 <th className="px-2 py-2 text-xs font-semibold text-gray-400 whitespace-nowrap">Created</th>
                 <th className="px-2 py-2 text-xs font-semibold text-gray-400 whitespace-nowrap">Confirmed</th>
@@ -301,29 +318,41 @@ export function ProductIntelligenceGrid({ t, locale, dimMode, products, search, 
                 <tr key={p.productId} className="hover:bg-gray-50/60 transition-colors">
                   <NameCell p={p} />
                   {tab === 0 && <>
-                    <td className="px-2 py-2 text-center font-semibold text-green-600">{p.ordersDelivered}</td>
-                    <td className="px-2 py-2 text-center text-red-500">{p.ordersRefused || "—"}</td>
-                    <td className="px-2 py-2 text-center text-amber-500">{p.ordersReturned ? Math.ceil(p.ordersReturned / 2) : "—"}</td>
-                    <td className="px-2 py-2 text-center text-amber-600">{p.ordersReturned || "—"}</td>
-                    <td className="px-2 py-2 text-center text-gray-500">—</td>
-                    <td className="px-2 py-2 text-center text-gray-500">—</td>
-                    <td className="px-2 py-2 text-center text-gray-400">{p.ordersShipped - p.ordersDelivered - p.ordersRefused - p.ordersReturned > 0 ? p.ordersShipped - p.ordersDelivered - p.ordersRefused - p.ordersReturned : "—"}</td>
-                    <td className="px-2 py-2 tabular-nums">
-                      <div className="flex items-center gap-0.5">{dim(p.revenue, p.revenuePerOrder, p.revenuePerItem)}<FormulaMiniInspector formulaId="FIN-001" locale={locale} /></div>
-                    </td>
-                    <td className="px-2 py-2 tabular-nums text-gray-500">{egp(totalCost)}</td>
-                    <td className="px-2 py-2 tabular-nums">
-                      <div className={cn("flex items-center gap-0.5", p.trueProfit >= 0 ? "text-green-600 font-semibold" : "text-red-600 font-semibold")}>
-                        {dim(p.trueProfit, p.profitPerOrder, p.profitPerItem)}
-                        <FormulaMiniInspector formulaId="TRUE-001" locale={locale} />
-                      </div>
-                    </td>
-                    <td className="px-2 py-2 tabular-nums">{pct(p.profitMarginPct)}</td>
-                    <td className="px-2 py-2 text-center"><span className={cn("font-semibold text-xs", INV_CLS[invStatus])}>74</span></td>
-                    <td className="px-2 py-2 text-center">
-                      {alert ? <span className={cn("rounded-full text-xs px-1.5 py-0.5", p.trueProfit < 0 || invStatus !== "IN_STOCK" ? "text-red-500" : "text-amber-500")}>{alert}</span> : "—"}
-                    </td>
-                  </>}
+  <td className="px-2 py-2 text-center">{p.ordersNew || "—"}</td>
+  <td className="px-2 py-2 text-center">{p.ordersPending || "—"}</td>
+  <td className="px-2 py-2 text-center">{p.ordersConfirmed || "—"}</td>
+  <td className="px-2 py-2 text-center text-red-500">{p.ordersCancelled || "—"}</td>
+
+  <td className="px-2 py-2 text-center">{p.bostaNew || "—"}</td>
+  <td className="px-2 py-2 text-center">{p.bostaPicked || "—"}</td>
+  <td className="px-2 py-2 text-center">{p.bostaInTransit || "—"}</td>
+  <td className="px-2 py-2 text-center">{p.bostaOutForDelivery || "—"}</td>
+  <td className="px-2 py-2 text-center font-semibold text-green-600">{p.ordersDelivered || "—"}</td>
+  <td className="px-2 py-2 text-center text-red-500">{p.ordersRefused || "—"}</td>
+  <td className="px-2 py-2 text-center text-amber-600">{p.ordersReturned || "—"}</td>
+  <td className="px-2 py-2 text-center">{p.bostaExchange || "—"}</td>
+
+  <td className="px-2 py-2 tabular-nums">{egp(p.revenue)}</td>
+  <td className="px-2 py-2 tabular-nums">{egp(p.cogs)}</td>
+  <td className="px-2 py-2 tabular-nums">{egp(p.shippingCost)}</td>
+  <td className="px-2 py-2 tabular-nums">{egp(p.returnShippingCost)}</td>
+  <td className="px-2 py-2 tabular-nums">{egp(totalCost)}</td>
+  <td className={cn("px-2 py-2 tabular-nums font-semibold", p.trueProfit >= 0 ? "text-green-600" : "text-red-600")}>
+    {egp(p.trueProfit)}
+  </td>
+  <td className="px-2 py-2 tabular-nums">{pct(p.profitMarginPct)}</td>
+
+  <td className="px-2 py-2 tabular-nums">{p.adSpend > 0 ? egp(p.adSpend) : "—"}</td>
+  <td className="px-2 py-2 tabular-nums">{p.trueCpa != null ? egp(p.trueCpa) : "—"}</td>
+  <td className="px-2 py-2 tabular-nums">{p.trueRoas != null ? mult(p.trueRoas) : "—"}</td>
+
+  <td className="px-2 py-2 text-center font-semibold">{p.stockAvailable}</td>
+  <td className="px-2 py-2 text-center">{p.daysRemaining != null ? `${Math.round(p.daysRemaining)}d` : "∞"}</td>
+  <td className="px-2 py-2 text-center font-semibold">74</td>
+  <td className="px-2 py-2 text-center">
+    {alert ? <span className="text-red-500">{alert}</span> : "—"}
+  </td>
+</>}
                   {tab === 1 && <>
                     <td className="px-2 py-2 text-center">{p.ordersCreated}</td>
                     <td className="px-2 py-2 text-center">{p.ordersConfirmed}</td>
