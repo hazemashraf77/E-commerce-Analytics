@@ -1,18 +1,6 @@
 /**
- * Product Performance Service — Sprint 2B Phase 1
- *
- * Repository: 076_METRICS_CATALOG.md, 075_HOMEPAGE_CONTRACT.md, 060_PRODUCT_INTELLIGENCE.md
- *
- * Single source of truth for all product-level KPIs.
- * All business calculations delegate to Formula Engine (kpi.calculator.ts).
- * This service owns only DB queries. No formula duplication.
- *
- * Data owners per 076_METRICS_CATALOG.md:
- *   Orders      → EasyOrders (via our canonical Order model)
- *   Shipments   → Bosta      (via our Shipment model, actualShippingCost)
- *   Marketing   → Meta / TikTok (via MarketingSpend)
- *   Inventory   → Inventory Engine (InventoryLayer)
- *   Financial   → Financial Engine (calcRevenue, calcGrossProfit, calcNetProfit, calcTrueProfit)
+ * Product Performance Service — Homepage Product Aggregator
+ * Uses Business Status Engine as the single source of truth for lifecycle mapping.
  */
 
 import { prisma } from "@/lib/db/prisma";
@@ -41,6 +29,7 @@ import {
   classifyInventoryStatus,
   type ProductKpiRow,
 } from "@/modules/formula-engine/application/kpi.calculator";
+import { evaluateBusinessStatus, isBusinessActivityInRange } from "@/services/business-status-engine";
 
 const logger = createLogger("ProductPerformanceService");
 
@@ -58,165 +47,45 @@ export interface ProductPerformanceResult {
   source: "DB_KPI_CALCULATOR";
 }
 
-/**
- * Compute per-product KPI rows for the specified period.
- * Every value comes from the DB; every calculation uses the Formula Engine.
- * No mock data. No duplicated formulas.
- */
-export async function computeProductPerformance(
-  input: ProductPerformanceInput,
-): Promise<ProductPerformanceResult> {
-  const { storeId, from, to } = input;
-  const periodDays = Math.max(1, Math.round((to.getTime() - from.getTime()) / 86_400_000));
-  const periodMonths = Math.max(1 / 30, periodDays / 30);
+type ProductKpiRowWithLifecycle = ProductKpiRow & Record<string, number | string | null>;
 
-  logger.info("Computing product performance", {
-    metadata: { storeId, from: from.toISOString(), to: to.toISOString(), periodDays },
-  });
-
-  // ── 1. Load all active products ──────────────────────────────────────────
-  const products = await prisma.product.findMany({
-    where: {
-      storeId,
-      isDeleted: false,
-    },
-    select: {
-      id: true,
-      sku: true,
-      name: true,
-      category: true,
-      imageUrl: true,
-      defaultSellingPrice: true,
-      unitProductCost: true,
-      packagingCost: true,
-      minimumStockThreshold: true,
-    },
-  });
-
-  if (products.length === 0) {
-    return {
-      products: [],
-      computedAt: new Date().toISOString(),
-      periodDays,
-      periodMonths,
-      source: "DB_KPI_CALCULATOR",
-    };
-  }
-
-  const productIds = products.map((p) => p.id);
-
-  // ── 2. Load OrderItem aggregates within period ────────────────────────────
-  // Orders are filtered by orderDate. Shipment status is joined for lifecycle counts.
-  const orderItems = await prisma.orderItem.findMany({
-    where: {
-      productId: { in: productIds },
-      order: { storeId, orderDate: { gte: from, lte: to } },
-    },
-    select: {
-      id: true,
-      productId: true,
-      quantity: true,
-      unitPrice: true,
-      discount: true,
-      fifoCost: true,
-      allocatedRevenue: true,
-      order: {
-        select: {
-          id: true,
-          orderStatus: true,
-          customerShippingFee: true,
-          shipment: {
-            select: {
-              shipmentStatus: true,
-              actualShippingCost: true,
-              deliveryDate: true,
-              returnDate: true,
-            },
-          },
-        },
-      },
-    },
-  });
-
-  // ── 3. Load marketing spend per product ──────────────────────────────────
-  // MarketingSpend is store-level. Attribution at product level requires
-  // Campaign→Product linkage which may not exist yet. For now: store total
-  // allocated proportionally to delivered orders (Allocation Engine rule).
-  const totalAdSpend = await prisma.marketingSpend.aggregate({
-    where: { storeId, spendDate: { gte: from, lte: to } },
-    _sum: { amount: true },
-  });
-  const storeAdSpend = Number(totalAdSpend._sum.amount ?? 0);
-
-  // ── 4. Load inventory state (current, not time-filtered) ─────────────────
-  const inventoryLayers = await prisma.inventoryLayer.findMany({
-    where: { productId: { in: productIds }, isDeleted: false },
-    select: { productId: true, remainingQuantity: true, unitCost: true },
-  });
-
-  // ── 5. Load FinancialAdjustments for refunds/compensations ───────────────
-  const adjustments = await prisma.financialAdjustment.findMany({
-    where: {
-      occurredAt: {
-        gte: from,
-        lte: to,
-      },
-      order: {
-        storeId,
-      },
-    },
-    select: {
-      amount: true,
-      order: {
-        select: {
-        orderItems: {
-            select: {
-              productId: true,
-              quantity: true,
-              unitPrice: true,
-              discount: true,
-            },
-          },
-        },
-      },
-    },
-  });
-
-  // ── 6. Load expenses for net profit / true profit ────────────────────────
-  const [fixedExpenses, variableExpenses] = await Promise.all([
-    prisma.fixedExpense.aggregate({
-      where: { storeId, isDeleted: false, status: "ACTIVE" },
-      _sum: { amount: true },
-    }),
-    prisma.variableExpense.aggregate({
-      where: { storeId, isDeleted: false, expenseDate: { gte: from, lte: to } },
-      _sum: { amount: true },
-    }),
-  ]);
-  const storeFixedExp = Number(fixedExpenses._sum.amount ?? 0);
-  const storeVariableExp = Number(variableExpenses._sum.amount ?? 0);
-
-  // ── 7. Build per-product aggregation maps ────────────────────────────────
-  type OrderAgg = {
+type Agg = {
   orderIds: Set<string>;
+  countedLifecycleKeys: Set<string>;
 
-  // EasyOrders lifecycle
   ordersNew: number;
   ordersPending: number;
   ordersConfirmed: number;
+  ordersProcessing: number;
+  ordersReadyToShip: number;
+  ordersSentToBosta: number;
+  ordersDeliveredStatus: number;
   ordersCancelled: number;
+  ordersSpam: number;
+  ordersNeedsReview: number;
 
-  // Bosta lifecycle
+  ordersDraft: number;
+  ordersShippedStatus: number;
+  ordersClosed: number;
+
   bostaNew: number;
-  bostaPicked: number;
+  bostaReceived: number;
   bostaInTransit: number;
   bostaOutForDelivery: number;
   bostaDelivered: number;
-  bostaReturned: number;
   bostaRefused: number;
+  bostaReturnRequested: number;
+  bostaReturnCompleted: number;
+  bostaExchangeRequested: number;
+  bostaExchangeCompleted: number;
+  bostaCancelled: number;
+  bostaException: number;
+  bostaLost: number;
+
+  bostaPicked: number;
+  bostaReturned: number;
   bostaExchange: number;
 
-  // Existing totals
   ordersShipped: number;
   ordersDelivered: number;
   ordersReturned: number;
@@ -229,164 +98,42 @@ export async function computeProductPerformance(
   shipCostReturn: number;
 };
 
-  const aggMap = new Map<string, OrderAgg>();
-  for (const p of products) {
-    aggMap.set(p.id, {
-  orderIds: new Set(),
-
-  ordersNew: 0,
-  ordersPending: 0,
-  ordersConfirmed: 0,
-  ordersCancelled: 0,
-
-  bostaNew: 0,
-  bostaPicked: 0,
-  bostaInTransit: 0,
-  bostaOutForDelivery: 0,
-  bostaDelivered: 0,
-  bostaReturned: 0,
-  bostaRefused: 0,
-  bostaExchange: 0,
-
-  ordersShipped: 0,
-  ordersDelivered: 0,
-  ordersReturned: 0,
-  ordersRefused: 0,
-  unitsDelivered: 0,
-  grossRevenue: 0,
-  customerShipFees: 0,
-  fifoCost: 0,
-  shipCostOutbound: 0,
-  shipCostReturn: 0,
-});
-  }
-
-  for (const oi of orderItems) {
-    const a = aggMap.get(oi.productId);
-    if (!a) continue;
-    const qty = Number(oi.quantity);
-    const price = Number(oi.unitPrice);
-    const disc = Number(oi.discount);
-    const lineRev = qty * price - disc;
-    const shipment = oi.order.shipment;
-    const status = oi.order.orderStatus;
-    const sStatus = shipment?.shipmentStatus ?? null;
-
-    // EasyOrders lifecycle
-if (status === "NEW") a.ordersNew++;
-if (status === "PENDING" || status === "PROCESSING" || status === "READY_TO_SHIP") {
-  a.ordersPending++;
-}
-if (status === "CANCELLED") a.ordersCancelled++;
-
-// Bosta lifecycle
-if (sStatus === "NEW") a.bostaNew++;
-if (sStatus === "PICKED_UP" || sStatus === "PICKED") a.bostaPicked++;
-if (sStatus === "IN_TRANSIT") a.bostaInTransit++;
-if (sStatus === "OUT_FOR_DELIVERY") a.bostaOutForDelivery++;
-if (sStatus === "DELIVERED") a.bostaDelivered++;
-if (sStatus === "RETURNED" || sStatus === "EXPECTED_RETURN") a.bostaReturned++;
-if (sStatus === "DELIVERY_FAILED" || sStatus === "REFUSED") a.bostaRefused++;
-if (sStatus === "EXCHANGE" || sStatus === "EXCHANGED") a.bostaExchange++;
-
-    a.orderIds.add(oi.order.id);
-    a.grossRevenue += lineRev;
-    a.customerShipFees += Number(oi.order.customerShippingFee ?? 0) / Math.max(1, 1); // one shipment fee per order, divided if needed in future
-
-    // FIFO cost from orderItem (set by inventory engine) or fallback to product cost
-    a.fifoCost += Number(oi.fifoCost ?? 0);
-
-    // Lifecycle counts per OrderStatus / ShipmentStatus
-    if (
-      status === "CONFIRMED" ||
-      status === "PROCESSING" ||
-      status === "READY_TO_SHIP" ||
-      status === "SHIPPED" ||
-      status === "DELIVERED" ||
-      status === "CLOSED"
-    ) {
-      a.ordersConfirmed++;
-    }
-    if (status === "SHIPPED" || status === "DELIVERED" || status === "CLOSED") {
-      a.ordersShipped++;
-    }
-    if (status === "DELIVERED" || status === "CLOSED" || sStatus === "DELIVERED") {
-      a.ordersDelivered++;
-      a.unitsDelivered += qty;
-      a.shipCostOutbound += Number(shipment?.actualShippingCost ?? 0);
-    }
-    if (sStatus === "RETURNED" || sStatus === "EXPECTED_RETURN") {
-      a.ordersReturned++;
-      // Return shipping cost is the same as the outbound cost for the return leg
-      a.shipCostReturn += Number(shipment?.actualShippingCost ?? 0);
-    }
-    if (sStatus === "DELIVERY_FAILED") {
-      a.ordersRefused++;
-    }
-  }
-
-  // ── 8. Per-product adjustments (refunds, compensations) ──────────────────
-  type AdjAgg = { refunds: number; compensations: number; manual: number };
-
-  const adjMap = new Map<string, AdjAgg>();
-
-  for (const adj of adjustments) {
-    const items = adj.order?.orderItems ?? [];
-    if (items.length === 0) continue;
-
-    const orderTotal = items.reduce((sum, item) => {
-      return sum + Number(item.quantity) * Number(item.unitPrice) - Number(item.discount ?? 0);
-    }, 0);
-
-    for (const item of items) {
-      const lineTotal = Number(item.quantity) * Number(item.unitPrice) - Number(item.discount ?? 0);
-
-      const share = orderTotal > 0 ? lineTotal / orderTotal : 1 / items.length;
-      const allocatedAmount = Number(adj.amount) * share;
-
-      const existing = adjMap.get(item.productId) ?? {
-        refunds: 0,
-        compensations: 0,
-        manual: 0,
-      };
-
-      existing.manual += allocatedAmount;
-      adjMap.set(item.productId, existing);
-    }
-  }
-
-  // ── 9. Inventory map ──────────────────────────────────────────────────────
-  type InvAgg = { stock: number; value: number };
-  const invMap = new Map<string, InvAgg>();
-  for (const layer of inventoryLayers) {
-    const existing = invMap.get(layer.productId) ?? { stock: 0, value: 0 };
-    const qty = Number(layer.remainingQuantity);
-    const cost = Number(layer.unitCost);
-    existing.stock += qty;
-    existing.value += qty * cost;
-    invMap.set(layer.productId, existing);
-  }
-
-  // ── 10. Total delivered orders across all products (for ad spend allocation) ─
-  const totalDelivered = Array.from(aggMap.values()).reduce((s, a) => s + a.ordersDelivered, 0);
-
-  // ── 11. Build ProductKpiRow for each product ──────────────────────────────
-  const rows: ProductKpiRow[] = products.map((p) => {
-  const a = aggMap.get(p.id) ?? {
+function emptyAgg(): Agg {
+  return {
     orderIds: new Set<string>(),
+    countedLifecycleKeys: new Set<string>(),
 
     ordersNew: 0,
     ordersPending: 0,
     ordersConfirmed: 0,
+    ordersProcessing: 0,
+    ordersReadyToShip: 0,
+    ordersSentToBosta: 0,
+    ordersDeliveredStatus: 0,
     ordersCancelled: 0,
+    ordersSpam: 0,
+    ordersNeedsReview: 0,
+
+    ordersDraft: 0,
+    ordersShippedStatus: 0,
+    ordersClosed: 0,
 
     bostaNew: 0,
-    bostaPicked: 0,
+    bostaReceived: 0,
     bostaInTransit: 0,
     bostaOutForDelivery: 0,
     bostaDelivered: 0,
-    bostaReturned: 0,
     bostaRefused: 0,
+    bostaReturnRequested: 0,
+    bostaReturnCompleted: 0,
+    bostaExchangeRequested: 0,
+    bostaExchangeCompleted: 0,
+    bostaCancelled: 0,
+    bostaException: 0,
+    bostaLost: 0,
+
+    bostaPicked: 0,
+    bostaReturned: 0,
     bostaExchange: 0,
 
     ordersShipped: 0,
@@ -400,69 +147,406 @@ if (sStatus === "EXCHANGE" || sStatus === "EXCHANGED") a.bostaExchange++;
     shipCostOutbound: 0,
     shipCostReturn: 0,
   };
+}
 
-    const adj = adjMap.get(p.id) ?? { refunds: 0, compensations: 0, manual: 0 };
-    const inv = invMap.get(p.id) ?? { stock: 0, value: 0 };
+function addLifecycleOnce(params: {
+  agg: Agg;
+  key: string;
+  orderId: string;
+  quantity: number;
+  shipmentCost: number;
+  status: ReturnType<typeof evaluateBusinessStatus>;
+}) {
+  const { agg, key, orderId, quantity, shipmentCost, status } = params;
+  if (agg.countedLifecycleKeys.has(key)) return;
+  agg.countedLifecycleKeys.add(key);
+  agg.orderIds.add(orderId);
 
-    // Allocate store-level ad spend by share of delivered orders (Allocation Engine)
-    const productDeliveredShare = totalDelivered > 0 ? a.ordersDelivered / totalDelivered : 0;
+  if (status.easy.new) {
+    agg.ordersNew++;
+    agg.ordersDraft++;
+  }
+  if (status.easy.confirmed) agg.ordersConfirmed++;
+  if (status.easy.processing) agg.ordersProcessing++;
+  if (status.easy.readyToShip) agg.ordersReadyToShip++;
+  if (status.easy.sentToBosta) {
+    agg.ordersSentToBosta++;
+    agg.ordersShippedStatus++;
+  }
+  if (status.easy.delivered) agg.ordersDeliveredStatus++;
+  if (status.easy.cancelled) agg.ordersCancelled++;
+  if (status.easy.spam) agg.ordersSpam++;
+  if (status.easy.needsReview) agg.ordersNeedsReview++;
+
+  // Backward compatibility only. We intentionally do NOT put PENDING into "معلق" anymore.
+  if (!status.easy.new && !status.easy.confirmed && !status.easy.cancelled && !status.easy.delivered && !status.easy.needsReview) {
+    agg.ordersPending++;
+  }
+
+  if (status.bosta.new) agg.bostaNew++;
+  if (status.bosta.received) {
+    agg.bostaReceived++;
+    agg.bostaPicked++;
+  }
+  if (status.bosta.inTransit) agg.bostaInTransit++;
+  if (status.bosta.outForDelivery) agg.bostaOutForDelivery++;
+  if (status.bosta.delivered) agg.bostaDelivered++;
+  if (status.bosta.refused) agg.bostaRefused++;
+  if (status.bosta.returnRequested) agg.bostaReturnRequested++;
+  if (status.bosta.returnCompleted) agg.bostaReturnCompleted++;
+  if (status.bosta.exchangeRequested) agg.bostaExchangeRequested++;
+  if (status.bosta.exchangeCompleted) agg.bostaExchangeCompleted++;
+  if (status.bosta.cancelled) agg.bostaCancelled++;
+  if (status.bosta.problem) agg.bostaException++;
+  if (status.bosta.lost) agg.bostaLost++;
+
+  agg.bostaReturned = agg.bostaReturnRequested + agg.bostaReturnCompleted;
+  agg.bostaExchange = agg.bostaExchangeRequested + agg.bostaExchangeCompleted;
+
+  if (status.finance.outboundShippingEligible) {
+    agg.ordersShipped++;
+    agg.shipCostOutbound += shipmentCost;
+  }
+
+  if (status.flags.isDelivered) {
+    agg.ordersDelivered++;
+    agg.unitsDelivered += quantity;
+  }
+
+  if (status.flags.isReturned) {
+    agg.ordersReturned++;
+    agg.shipCostReturn += shipmentCost;
+  }
+
+  if (status.flags.isRefused) {
+    agg.ordersRefused++;
+  }
+}
+
+function shouldCountSaleRevenue(status: ReturnType<typeof evaluateBusinessStatus>): boolean {
+  const isSaleDelivery =
+    status.bosta.delivered ||
+    status.easy.delivered ||
+    status.flags.isDelivered;
+
+  const isReturnOrExchangeOperation =
+    status.raw.operationType === "RETURN" ||
+    status.raw.operationType === "EXCHANGE" ||
+    status.bosta.returnCompleted ||
+    status.bosta.exchangeCompleted ||
+    status.flags.isReturned ||
+    status.flags.isExchange;
+
+  return Boolean(isSaleDelivery && !isReturnOrExchangeOperation && !status.flags.isCancelled);
+}
+
+export async function computeProductPerformance(input: ProductPerformanceInput): Promise<ProductPerformanceResult> {
+  const { storeId, from, to } = input;
+  const periodDays = Math.max(1, Math.round((to.getTime() - from.getTime()) / 86_400_000));
+  const periodMonths = Math.max(1 / 30, periodDays / 30);
+
+  logger.info("Computing product performance", {
+    metadata: { storeId, from: from.toISOString(), to: to.toISOString(), periodDays },
+  });
+
+  const products = await prisma.product.findMany({
+    where: { storeId, isDeleted: false },
+    select: {
+      id: true,
+      sku: true,
+      name: true,
+      category: true,
+      imageUrl: true,
+      defaultSellingPrice: true,
+      unitProductCost: true,
+      packagingCost: true,
+      minimumStockThreshold: true,
+    },
+  });
+
+  const productIds = products.map((p) => p.id);
+
+  const orderActivityWhere = {
+    storeId,
+    OR: [
+      { orderDate: { gte: from, lte: to } },
+      { updatedAt: { gte: from, lte: to } },
+      { shipment: { is: { deliveryDate: { gte: from, lte: to } } } },
+      { shipment: { is: { returnDate: { gte: from, lte: to } } } },
+      { shipment: { is: { updatedAt: { gte: from, lte: to } } } },
+    ],
+  } as const;
+
+  const [orderItems, providerItems, totalAdSpend, inventoryLayers, adjustments, fixedExpenses, variableExpenses] = await Promise.all([
+    prisma.orderItem.findMany({
+      where: { productId: { in: productIds }, order: orderActivityWhere },
+      select: {
+        id: true,
+        productId: true,
+        quantity: true,
+        unitPrice: true,
+        discount: true,
+        fifoCost: true,
+        order: {
+          select: {
+            id: true,
+            orderStatus: true,
+            orderDate: true,
+            updatedAt: true,
+            customerShippingFee: true,
+            shipment: {
+              select: {
+                shipmentStatus: true,
+                actualShippingCost: true,
+                deliveryDate: true,
+                returnDate: true,
+                updatedAt: true,
+              },
+            },
+          },
+        },
+      },
+    }),
+    prisma.providerOrderItem.findMany({
+      where: {
+        storeId,
+        status: { not: "IGNORED" },
+        orderId: { not: null },
+        order: { is: orderActivityWhere },
+      },
+      select: {
+        id: true,
+        providerProductId: true,
+        productId: true,
+        sku: true,
+        productName: true,
+        quantity: true,
+        unitPrice: true,
+        discount: true,
+        rawPayload: true,
+        order: {
+          select: {
+            id: true,
+            orderStatus: true,
+            orderDate: true,
+            updatedAt: true,
+            customerShippingFee: true,
+            shipment: {
+              select: {
+                shipmentStatus: true,
+                actualShippingCost: true,
+                deliveryDate: true,
+                returnDate: true,
+                updatedAt: true,
+              },
+            },
+          },
+        },
+      },
+    }),
+    prisma.marketingSpend.aggregate({
+      where: { storeId, spendDate: { gte: from, lte: to } },
+      _sum: { amount: true },
+    }),
+    prisma.inventoryLayer.findMany({
+      where: { productId: { in: productIds }, isDeleted: false },
+      select: { productId: true, remainingQuantity: true, unitCost: true },
+    }),
+    prisma.financialAdjustment.findMany({
+      where: { occurredAt: { gte: from, lte: to }, order: { storeId } },
+      select: {
+        amount: true,
+        order: {
+          select: {
+            orderItems: { select: { productId: true, quantity: true, unitPrice: true, discount: true } },
+          },
+        },
+      },
+    }),
+    prisma.fixedExpense.aggregate({
+      where: { storeId, isDeleted: false, status: "ACTIVE" },
+      _sum: { amount: true },
+    }),
+    prisma.variableExpense.aggregate({
+      where: { storeId, isDeleted: false, expenseDate: { gte: from, lte: to } },
+      _sum: { amount: true },
+    }),
+  ]);
+
+  const storeAdSpend = Number(totalAdSpend._sum.amount ?? 0);
+  const storeFixedExp = Number(fixedExpenses._sum.amount ?? 0);
+  const storeVariableExp = Number(variableExpenses._sum.amount ?? 0);
+
+  const aggMap = new Map<string, Agg>();
+  for (const p of products) aggMap.set(p.id, emptyAgg());
+
+  const providerOrderItemIds = new Set(providerItems.map((p) => p.order?.id).filter(Boolean) as string[]);
+
+  // ProviderOrderItem is preferred because it carries the original imported payload/product identity.
+  const virtualMeta = new Map<string, { productId: string; productName: string; sku: string }>();
+
+  for (const item of providerItems) {
+    const order = item.order;
+    if (!order) continue;
+
+    const status = evaluateBusinessStatus({
+      easyOrdersStatus: order.orderStatus,
+      orderStatus: order.orderStatus,
+      shipmentStatus: order.shipment?.shipmentStatus,
+      deliveryDate: order.shipment?.deliveryDate,
+      returnDate: order.shipment?.returnDate,
+      shipmentUpdatedAt: order.shipment?.updatedAt,
+      orderDate: order.orderDate,
+      orderUpdatedAt: order.updatedAt,
+      rawPayload: item.rawPayload,
+    });
+
+    if (!isBusinessActivityInRange(status, from, to)) continue;
+
+    const key = item.productId && aggMap.has(item.productId)
+      ? item.productId
+      : `provider:${item.providerProductId || item.sku || item.productName || item.id}`;
+
+    if (!aggMap.has(key)) {
+      aggMap.set(key, emptyAgg());
+      virtualMeta.set(key, {
+        productId: key,
+        productName: item.productName || item.sku || "منتج مستورد غير مربوط",
+        sku: item.sku || item.providerProductId || "UNMAPPED",
+      });
+    }
+
+    const agg = aggMap.get(key)!;
+    const qty = Number(item.quantity ?? 0);
+    const price = Number(item.unitPrice ?? 0);
+    const discount = Number(item.discount ?? 0);
+    const lineRev = qty * price - discount;
+    const shipmentCost = Number(order.shipment?.actualShippingCost ?? 0);
+
+    const countSaleRevenue = shouldCountSaleRevenue(status);
+
+    addLifecycleOnce({
+      agg,
+      key: `${key}:${order.id}`,
+      orderId: order.id,
+      quantity: countSaleRevenue ? qty : 0,
+      shipmentCost,
+      status,
+    });
+
+    if (countSaleRevenue) {
+      agg.grossRevenue += lineRev;
+      agg.customerShipFees += Number(order.customerShippingFee ?? 0);
+    }
+  }
+
+  // Fallback for manual/native order items not represented by ProviderOrderItem.
+  for (const oi of orderItems) {
+    const order = oi.order;
+    if (providerOrderItemIds.has(order.id)) continue;
+    const agg = aggMap.get(oi.productId);
+    if (!agg) continue;
+
+    const status = evaluateBusinessStatus({
+      easyOrdersStatus: order.orderStatus,
+      orderStatus: order.orderStatus,
+      shipmentStatus: order.shipment?.shipmentStatus,
+      deliveryDate: order.shipment?.deliveryDate,
+      returnDate: order.shipment?.returnDate,
+      shipmentUpdatedAt: order.shipment?.updatedAt,
+      orderDate: order.orderDate,
+      orderUpdatedAt: order.updatedAt,
+    });
+
+    if (!isBusinessActivityInRange(status, from, to)) continue;
+
+    const qty = Number(oi.quantity ?? 0);
+    const price = Number(oi.unitPrice ?? 0);
+    const discount = Number(oi.discount ?? 0);
+    const lineRev = qty * price - discount;
+    const shipmentCost = Number(order.shipment?.actualShippingCost ?? 0);
+
+    const countSaleRevenue = shouldCountSaleRevenue(status);
+
+    addLifecycleOnce({
+      agg,
+      key: `${oi.productId}:${order.id}`,
+      orderId: order.id,
+      quantity: countSaleRevenue ? qty : 0,
+      shipmentCost,
+      status,
+    });
+
+    if (countSaleRevenue) {
+      agg.grossRevenue += lineRev;
+      agg.customerShipFees += Number(order.customerShippingFee ?? 0);
+      agg.fifoCost += Number(oi.fifoCost ?? 0);
+    }
+  }
+
+  type AdjAgg = { refunds: number; compensations: number; manual: number };
+  const adjMap = new Map<string, AdjAgg>();
+  for (const adj of adjustments) {
+    const items = adj.order?.orderItems ?? [];
+    if (items.length === 0) continue;
+
+    const orderTotal = items.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unitPrice) - Number(item.discount ?? 0), 0);
+    for (const item of items) {
+      const lineTotal = Number(item.quantity) * Number(item.unitPrice) - Number(item.discount ?? 0);
+      const share = orderTotal > 0 ? lineTotal / orderTotal : 1 / items.length;
+      const existing = adjMap.get(item.productId) ?? { refunds: 0, compensations: 0, manual: 0 };
+      existing.manual += Number(adj.amount) * share;
+      adjMap.set(item.productId, existing);
+    }
+  }
+
+  type InvAgg = { stock: number; value: number };
+  const invMap = new Map<string, InvAgg>();
+  for (const layer of inventoryLayers) {
+    const existing = invMap.get(layer.productId) ?? { stock: 0, value: 0 };
+    const qty = Number(layer.remainingQuantity);
+    const cost = Number(layer.unitCost);
+    existing.stock += qty;
+    existing.value += qty * cost;
+    invMap.set(layer.productId, existing);
+  }
+
+  const totalDelivered = Array.from(aggMap.values()).reduce((s, a) => s + a.ordersDelivered, 0);
+
+  function buildProductRow(params: {
+    productId: string;
+    productName: string;
+    sku: string;
+    imageUrl: string | null;
+    category: string | null;
+    defaultSellingPrice: number;
+    unitProductCost: number;
+    packagingCostPerUnit: number;
+    minimumStockThreshold: number;
+    agg: Agg;
+    inv: InvAgg;
+    adj: AdjAgg;
+    isVirtual: boolean;
+  }): ProductKpiRowWithLifecycle {
+    const { productId, productName, sku, imageUrl, category, defaultSellingPrice, unitProductCost, packagingCostPerUnit, minimumStockThreshold, agg, inv, adj, isVirtual } = params;
+
+    const productDeliveredShare = totalDelivered > 0 ? agg.ordersDelivered / totalDelivered : 0;
     const allocatedAdSpend = storeAdSpend * productDeliveredShare;
-
-    // Allocate store-level expenses by same share
     const allocatedFixed = storeFixedExp * productDeliveredShare;
     const allocatedVariable = storeVariableExp * productDeliveredShare;
     const allocatedExpenses = allocatedFixed + allocatedVariable;
-
-    // Product packaging cost per unit
-    const packCostPerUnit = Number(p.packagingCost ?? 0);
-    const packCostTotal = packCostPerUnit * a.unitsDelivered;
-
-    // Use FIFO cost if populated; otherwise fall back to product unitProductCost
-    const effectiveCogs =
-      a.fifoCost > 0 ? a.fifoCost : Number(p.unitProductCost ?? 0) * a.unitsDelivered;
-
-    // Revenue = Formula FIN-001: product revenue + customer shipping fee
-    const revenue = calcRevenue(a.grossRevenue, a.customerShipFees);
-
-    // Financial calculations — all delegate to kpi.calculator.ts
+    const packCostTotal = packagingCostPerUnit * agg.unitsDelivered;
+    const effectiveCogs = agg.fifoCost > 0 ? agg.fifoCost : unitProductCost * agg.unitsDelivered;
+    const revenue = calcRevenue(agg.grossRevenue, agg.customerShipFees);
     const grossProfit = calcGrossProfit(revenue, effectiveCogs);
 
-    const netProfit = calcNetProfit(
-      revenue,
-      effectiveCogs,
-      a.shipCostOutbound,
-      allocatedAdSpend,
-      packCostTotal,
-      allocatedVariable,
-      allocatedFixed,
-      0, // adjustments handled in trueProfit
-    );
-
-    const trueProfit = calcTrueProfit(
-      revenue,
-      effectiveCogs,
-      packCostTotal,
-      a.shipCostOutbound,
-      a.shipCostReturn,
-      allocatedAdSpend,
-      adj.refunds,
-      adj.compensations,
-      allocatedExpenses,
-      adj.manual, // manual adjustments (FinancialAdjustment MANUAL type — future)
-    );
-
-    const contributionMargin = calcContributionMargin(
-      revenue,
-      effectiveCogs,
-      a.shipCostOutbound,
-      allocatedAdSpend,
-      packCostTotal,
-    );
-
+    const netProfit = calcNetProfit(revenue, effectiveCogs, agg.shipCostOutbound, allocatedAdSpend, packCostTotal, allocatedVariable, allocatedFixed, 0);
+    const trueProfit = calcTrueProfit(revenue, effectiveCogs, packCostTotal, agg.shipCostOutbound, agg.shipCostReturn, allocatedAdSpend, adj.refunds, adj.compensations, allocatedExpenses, adj.manual);
+    const contributionMargin = calcContributionMargin(revenue, effectiveCogs, agg.shipCostOutbound, allocatedAdSpend, packCostTotal);
     const profitMarginPct = calcProfitMarginPct(trueProfit, revenue);
 
     const profitLeakage = calcProfitLeakage({
-      returnShippingCost: a.shipCostReturn,
+      returnShippingCost: agg.shipCostReturn,
       refusedShippingCost: 0,
       refunds: adj.refunds,
       compensations: adj.compensations,
@@ -470,107 +554,155 @@ if (sStatus === "EXCHANGE" || sStatus === "EXCHANGED") a.bostaExchange++;
       excessAdSpendOnNonDelivered: 0,
     });
 
-    // Marketing KPIs
-    const ordersCreated = a.orderIds.size;
+    const ordersCreated = agg.orderIds.size;
     const advertisingCpa = calcAdvertisingCpa(allocatedAdSpend, ordersCreated);
-    const deliveredCpa = calcDeliveredCpa(allocatedAdSpend, a.ordersDelivered);
-    const trueCpa = calcTrueCpa(allocatedAdSpend, a.ordersDelivered);
+    const deliveredCpa = calcDeliveredCpa(allocatedAdSpend, agg.ordersDelivered);
+    const trueCpa = calcTrueCpa(allocatedAdSpend, agg.ordersDelivered);
     const deliveredRoas = calcDeliveredRoas(revenue, allocatedAdSpend);
     const trueRoas = calcTrueRoas(trueProfit, allocatedAdSpend);
     const ppap = calcPpap(trueProfit, allocatedAdSpend);
 
-    // Shipping KPIs
-    const deliveryRate = calcDeliveryRate(a.ordersDelivered, a.ordersShipped);
-    const returnRate = calcReturnRate(a.ordersReturned, a.ordersDelivered);
-    const refusalRate = calcRefusalRate(a.ordersRefused, a.ordersShipped);
+    const deliveryRate = calcDeliveryRate(agg.ordersDelivered, Math.max(agg.ordersShipped, agg.ordersDelivered));
+    const returnRate = calcReturnRate(agg.ordersReturned, agg.ordersDelivered);
+    const refusalRate = calcRefusalRate(agg.ordersRefused, Math.max(agg.ordersShipped, agg.ordersRefused));
 
-    const trueShipCost = calcTrueShippingCost(a.shipCostOutbound, a.shipCostReturn, 0);
-    calcShippingCostPerOrder(trueShipCost, a.ordersShipped);
+    const trueShipCost = calcTrueShippingCost(agg.shipCostOutbound, agg.shipCostReturn, 0);
+    calcShippingCostPerOrder(trueShipCost, agg.ordersShipped);
 
-    // Inventory KPIs
-    const velocity = calcInventoryVelocity(a.unitsDelivered, periodDays);
+    const velocity = calcInventoryVelocity(agg.unitsDelivered, periodDays);
     const daysRemaining = calcDaysRemaining(inv.stock, velocity);
-    const cashLocked = inv.stock * Number(p.unitProductCost ?? 0);
-    const inventoryStatus = classifyInventoryStatus(
-      inv.stock,
-      p.minimumStockThreshold ?? 0,
-      daysRemaining,
-    );
+    const cashLocked = inv.stock * unitProductCost;
+    const inventoryStatus = isVirtual ? "OUT_OF_STOCK" : classifyInventoryStatus(inv.stock, minimumStockThreshold, daysRemaining);
 
-    // Per-order / per-item dimensional views
     const revenuePerOrder = ordersCreated > 0 ? revenue / ordersCreated : null;
-    const profitPerOrder = a.ordersDelivered > 0 ? trueProfit / a.ordersDelivered : null;
-    const revenuePerItem = a.unitsDelivered > 0 ? revenue / a.unitsDelivered : null;
-    const profitPerItem = a.unitsDelivered > 0 ? trueProfit / a.unitsDelivered : null;
+    const profitPerOrder = agg.ordersDelivered > 0 ? trueProfit / agg.ordersDelivered : null;
+    const revenuePerItem = agg.unitsDelivered > 0 ? revenue / agg.unitsDelivered : null;
+    const profitPerItem = agg.unitsDelivered > 0 ? trueProfit / agg.unitsDelivered : null;
 
     return {
-    productId: p.id,
-    productName: p.name,
-    sku: p.sku,
-    imageUrl: p.imageUrl,
-    category: p.category,
-    defaultSellingPrice: Number(p.defaultSellingPrice ?? 0),
-    ordersNew: a.ordersNew,
-ordersPending: a.ordersPending,
-ordersCancelled: a.ordersCancelled,
+      productId,
+      productName,
+      sku,
+      imageUrl,
+      category,
+      defaultSellingPrice,
 
-bostaNew: a.bostaNew,
-bostaPicked: a.bostaPicked,
-bostaInTransit: a.bostaInTransit,
-bostaOutForDelivery: a.bostaOutForDelivery,
-bostaDelivered: a.bostaDelivered,
-bostaReturned: a.bostaReturned,
-bostaRefused: a.bostaRefused,
-bostaExchange: a.bostaExchange,
-      // Lifecycle — Order counts
+      ordersNew: agg.ordersNew,
+      ordersPending: agg.ordersPending,
+      ordersCancelled: agg.ordersCancelled,
+      ordersDraft: agg.ordersDraft,
+      ordersProcessing: agg.ordersProcessing,
+      ordersReadyToShip: agg.ordersReadyToShip,
+      ordersSentToBosta: agg.ordersSentToBosta,
+      ordersShippedStatus: agg.ordersShippedStatus,
+      ordersDeliveredStatus: agg.ordersDeliveredStatus,
+      ordersClosed: agg.ordersClosed,
+      ordersSpam: agg.ordersSpam,
+      ordersNeedsReview: agg.ordersNeedsReview,
+
+      bostaNew: agg.bostaNew,
+      bostaPicked: agg.bostaPicked,
+      bostaReceived: agg.bostaReceived,
+      bostaInTransit: agg.bostaInTransit,
+      bostaOutForDelivery: agg.bostaOutForDelivery,
+      bostaDelivered: agg.bostaDelivered,
+      bostaReturned: agg.bostaReturned,
+      bostaRefused: agg.bostaRefused,
+      bostaExchange: agg.bostaExchange,
+      bostaCancelled: agg.bostaCancelled,
+      bostaException: agg.bostaException,
+      bostaLost: agg.bostaLost,
+      bostaReturnRequested: agg.bostaReturnRequested,
+      bostaReturnCompleted: agg.bostaReturnCompleted,
+      bostaExchangeRequested: agg.bostaExchangeRequested,
+      bostaExchangeCompleted: agg.bostaExchangeCompleted,
+
       ordersCreated,
-      ordersConfirmed: a.ordersConfirmed,
-      ordersShipped: a.ordersShipped,
-      ordersDelivered: a.ordersDelivered,
-      ordersReturned: a.ordersReturned,
-      ordersRefused: a.ordersRefused,
-      itemsDelivered: a.unitsDelivered,
-      // Financial
+      ordersConfirmed: agg.ordersConfirmed,
+      ordersShipped: agg.ordersShipped,
+      ordersDelivered: agg.ordersDelivered,
+      ordersReturned: agg.ordersReturned,
+      ordersRefused: agg.ordersRefused,
+      itemsDelivered: agg.unitsDelivered,
+
       revenue,
       cogs: effectiveCogs,
       packagingCost: packCostTotal,
-      shippingCost: a.shipCostOutbound,
-      returnShippingCost: a.shipCostReturn,
+      shippingCost: agg.shipCostOutbound,
+      returnShippingCost: agg.shipCostReturn,
       adSpend: allocatedAdSpend,
       grossProfit,
       netProfit,
       trueProfit,
       contributionMargin,
       profitLeakage,
-      // Rates
+
       profitMarginPct,
       deliveryRate,
       returnRate,
       refusalRate,
-      // Marketing
+
       advertisingCpa,
       deliveredCpa,
       trueCpa,
       deliveredRoas,
       trueRoas,
       ppap,
-      // Per-order / item
+
       revenuePerOrder,
       profitPerOrder,
       revenuePerItem,
       profitPerItem,
-      // Inventory
+
       stockAvailable: inv.stock,
       inventoryValue: inv.value,
       daysRemaining,
       inventoryStatus,
       cashLocked,
-    };
-  });
+    } as ProductKpiRowWithLifecycle;
+  }
 
-  logger.info("Product performance computed", {
-    metadata: { storeId, productCount: rows.length, periodDays },
-  });
+  const rows: ProductKpiRow[] = [];
+
+  for (const p of products) {
+    const agg = aggMap.get(p.id) ?? emptyAgg();
+    rows.push(buildProductRow({
+      productId: p.id,
+      productName: p.name,
+      sku: p.sku,
+      imageUrl: p.imageUrl,
+      category: p.category,
+      defaultSellingPrice: Number(p.defaultSellingPrice ?? 0),
+      unitProductCost: Number(p.unitProductCost ?? 0),
+      packagingCostPerUnit: Number(p.packagingCost ?? 0),
+      minimumStockThreshold: p.minimumStockThreshold ?? 0,
+      agg,
+      inv: invMap.get(p.id) ?? { stock: 0, value: 0 },
+      adj: adjMap.get(p.id) ?? { refunds: 0, compensations: 0, manual: 0 },
+      isVirtual: false,
+    }));
+  }
+
+  for (const [key, meta] of virtualMeta.entries()) {
+    const agg = aggMap.get(key) ?? emptyAgg();
+    rows.push(buildProductRow({
+      productId: meta.productId,
+      productName: meta.productName,
+      sku: meta.sku,
+      imageUrl: null,
+      category: "مستورد من EasyOrders",
+      defaultSellingPrice: 0,
+      unitProductCost: 0,
+      packagingCostPerUnit: 0,
+      minimumStockThreshold: 0,
+      agg,
+      inv: { stock: 0, value: 0 },
+      adj: { refunds: 0, compensations: 0, manual: 0 },
+      isVirtual: true,
+    }));
+  }
+
+  logger.info("Product performance computed", { metadata: { storeId, productCount: rows.length, periodDays } });
 
   return {
     products: rows,

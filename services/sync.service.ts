@@ -18,7 +18,7 @@ import { EasyOrdersClient } from "@/adapters/eazy-order/client/eazy-order.client
 import { BostaClient } from "@/adapters/bosta/client/bosta.client";
 import { mapEazyOrderToCanonical } from "@/adapters/eazy-order/mappers/eazy-order.mapper";
 import { mapBostaShipmentToCanonical, mapBostaSettlementToCanonical } from "@/adapters/bosta/mappers/bosta.mapper";
-import type { SyncJobStatus } from "@prisma/client";
+import type { ShipmentStatus } from "@prisma/client";
 
 const logger = createLogger("SyncService");
 
@@ -277,52 +277,76 @@ async function syncBostaShipments(storeId: string, fullSync: boolean): Promise<S
             latestUpdatedAt = rawShipment.updatedAt;
           }
 
-          // Resolve order reference (Bosta uses merchant's order ID as businessReference)
-          const merchantRef = rawShipment.businessReference ?? rawShipment.order_id ?? "";
-          const enrichedMap = new Map(orderIdMap);
+          // Resolve order reference robustly.
+          // Bosta payloads are not stable: the merchant EasyOrders id may appear as
+          // businessReference, order_id, reference, merchantReferenceNumber, or nested metadata.
+          const merchantRef = resolveBostaMerchantReference(rawShipment);
+          const orderId = merchantRef ? orderIdMap.get(merchantRef) : undefined;
 
-          const shipment = mapBostaShipmentToCanonical(
-            { ...rawShipment, order_id: merchantRef },
-            enrichedMap,
-          );
-
-          if (!shipment) {
-            // Order not found — skip (will be picked up in next sync after order sync)
+          if (!orderId) {
+            logger.warn("Bosta shipment skipped — matching EasyOrders order not found", {
+              metadata: {
+                tracking: getBostaTrackingNumber(rawShipment),
+                merchantRef,
+                candidateRefs: getBostaReferenceCandidates(rawShipment),
+              },
+            });
             continue;
           }
 
+          const shipmentStatus = resolveBostaShipmentStatus(rawShipment);
+          const providerShipmentId = getBostaTrackingNumber(rawShipment);
+          const deliveryDate = resolveBostaDeliveryDate(rawShipment, shipmentStatus);
+          const returnDate = resolveBostaReturnDate(rawShipment, shipmentStatus);
+          const shippingZone = resolveBostaShippingZone(rawShipment);
+
           // Extract actual shipping cost — always from Bosta (Source of Truth: 005)
-          const actualCost = rawShipment.pricing?.total ?? 0;
-          const codAmount = rawShipment.pricing?.cod ?? rawShipment.pricing?.cod_amount ?? rawShipment.pricing?.cashOnDelivery ?? 0;
+          const actualCost = getNumberDeep(rawShipment, [
+            "pricing.total",
+            "pricing.fees",
+            "pricing.shippingFees",
+            "shippingFees",
+            "shippingCost",
+            "actualShippingCost",
+          ]);
+          const codAmount = getNumberDeep(rawShipment, [
+            "pricing.cod",
+            "pricing.cod_amount",
+            "pricing.cashOnDelivery",
+            "cod",
+            "cashOnDelivery",
+            "amount",
+          ]);
 
           await prisma.shipment.upsert({
-            where: { orderId: shipment.orderId },
+            where: { orderId },
             update: {
-              providerShipmentId: shipment.providerShipmentId,
-              shipmentStatus:     shipment.shipmentStatus,
-              deliveryDate:       shipment.deliveryDate ?? undefined,
-              returnDate:         shipment.returnDate ?? undefined,
+              providerShipmentId,
+              shipmentStatus,
+              shippingZone:       shippingZone ?? undefined,
+              deliveryDate:       deliveryDate ?? undefined,
+              returnDate:         returnDate ?? undefined,
               actualShippingCost: actualCost,
-              codAmount:          codAmount,
+              codAmount,
               syncedAt:           new Date(),
             },
             create: {
-              orderId:            shipment.orderId,
-              providerShipmentId: shipment.providerShipmentId,
-              shipmentStatus:     shipment.shipmentStatus,
-              shippingZone:       shipment.shippingZone ?? undefined,
-              deliveryDate:       shipment.deliveryDate ?? undefined,
-              returnDate:         shipment.returnDate ?? undefined,
+              orderId,
+              providerShipmentId,
+              shipmentStatus,
+              shippingZone:       shippingZone ?? undefined,
+              deliveryDate:       deliveryDate ?? undefined,
+              returnDate:         returnDate ?? undefined,
               actualShippingCost: actualCost,
-              codAmount:          codAmount,
+              codAmount,
               syncedAt:           new Date(),
             },
           });
 
           // Update order shipment status to match Bosta
           await prisma.order.update({
-            where: { id: shipment.orderId },
-            data: { shipmentStatus: shipment.shipmentStatus },
+            where: { id: orderId },
+            data: { shipmentStatus },
           }).catch(() => {}); // non-fatal if order doesn't exist yet
 
           recordsProcessed++;
@@ -480,28 +504,56 @@ export async function syncSingleShipment(storeId: string, trackingNumber: string
 
   try {
     const rawShipment = await client.fetchDelivery(trackingNumber);
-    const merchantRef = rawShipment.businessReference ?? rawShipment.order_id ?? "";
+    const merchantRef = resolveBostaMerchantReference(rawShipment);
 
     const order = await prisma.order.findFirst({
-  where: { storeId, provider: "EASYORDERS", providerOrderId: merchantRef },
+      where: { storeId, provider: "EASYORDERS", providerOrderId: merchantRef },
       select: { id: true },
     });
     if (!order) {
-      logger.warn("Shipment order not found — triggering order sync", { metadata: { storeId, merchantRef } });
+      logger.warn("Shipment order not found — triggering order sync", {
+        metadata: { storeId, merchantRef, trackingNumber, candidateRefs: getBostaReferenceCandidates(rawShipment) },
+      });
       return;
     }
 
-    const actualCost = rawShipment.pricing?.total ?? 0;
-    const codAmount = rawShipment.pricing?.cod ?? rawShipment.pricing?.cod_amount ?? 0;
-    const status = (BOSTA_STATE_MAP[rawShipment.state] ?? "CREATED") as any;
+    const actualCost = getNumberDeep(rawShipment, [
+      "pricing.total",
+      "pricing.fees",
+      "pricing.shippingFees",
+      "shippingFees",
+      "shippingCost",
+      "actualShippingCost",
+    ]);
+    const codAmount = getNumberDeep(rawShipment, [
+      "pricing.cod",
+      "pricing.cod_amount",
+      "pricing.cashOnDelivery",
+      "cod",
+      "cashOnDelivery",
+      "amount",
+    ]);
+    const status = resolveBostaShipmentStatus(rawShipment);
+    const deliveryDate = resolveBostaDeliveryDate(rawShipment, status);
+    const returnDate = resolveBostaReturnDate(rawShipment, status);
 
     await prisma.shipment.upsert({
       where: { orderId: order.id },
-      update: { shipmentStatus: status, actualShippingCost: actualCost, codAmount, syncedAt: new Date() },
+      update: {
+        providerShipmentId: getBostaTrackingNumber(rawShipment) || trackingNumber,
+        shipmentStatus: status,
+        deliveryDate: deliveryDate ?? undefined,
+        returnDate: returnDate ?? undefined,
+        actualShippingCost: actualCost,
+        codAmount,
+        syncedAt: new Date(),
+      },
       create: {
         orderId: order.id,
-        providerShipmentId: rawShipment._id ?? trackingNumber,
+        providerShipmentId: getBostaTrackingNumber(rawShipment) || trackingNumber,
         shipmentStatus: status,
+        deliveryDate: deliveryDate ?? undefined,
+        returnDate: returnDate ?? undefined,
         actualShippingCost: actualCost,
         codAmount,
         syncedAt: new Date(),
@@ -515,6 +567,231 @@ export async function syncSingleShipment(storeId: string, trackingNumber: string
     logger.error("Single shipment sync failed", { metadata: { storeId, trackingNumber, error: String(err) } });
     throw err;
   }
+}
+
+
+// ── Bosta payload helpers ─────────────────────────────────────────────────
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function getPath(source: unknown, path: string): unknown {
+  return path.split(".").reduce<unknown>((current, key) => {
+    if (!current || typeof current !== "object") return undefined;
+    return (current as Record<string, unknown>)[key];
+  }, source);
+}
+
+function firstStringDeep(source: unknown, keys: string[]): string | null {
+  const seen = new Set<unknown>();
+
+  function walk(value: unknown): string | null {
+    if (!value || typeof value !== "object" || seen.has(value)) return null;
+    seen.add(value);
+    const obj = value as Record<string, unknown>;
+
+    for (const key of keys) {
+      const direct = obj[key];
+      if (typeof direct === "string" && direct.trim()) return direct.trim();
+      if (typeof direct === "number" && Number.isFinite(direct)) return String(direct);
+    }
+
+    for (const child of Object.values(obj)) {
+      const found = walk(child);
+      if (found) return found;
+    }
+
+    return null;
+  }
+
+  return walk(source);
+}
+
+function getBostaReferenceCandidates(rawShipment: unknown): string[] {
+  const keys = [
+    "businessReference",
+    "business_reference",
+    "merchantReference",
+    "merchant_reference",
+    "merchantReferenceNumber",
+    "merchant_reference_number",
+    "reference",
+    "referenceNumber",
+    "reference_number",
+    "orderReference",
+    "order_reference",
+    "orderId",
+    "order_id",
+    "merchantOrderId",
+    "merchant_order_id",
+    "merchantOrderNumber",
+    "merchant_order_number",
+  ];
+
+  const values = new Set<string>();
+  const seen = new Set<unknown>();
+
+  function walk(value: unknown) {
+    if (!value || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    const obj = value as Record<string, unknown>;
+
+    for (const key of keys) {
+      const current = obj[key];
+      if ((typeof current === "string" && current.trim()) || typeof current === "number") {
+        values.add(String(current).trim());
+      }
+    }
+
+    for (const child of Object.values(obj)) walk(child);
+  }
+
+  walk(rawShipment);
+  return [...values].filter(Boolean);
+}
+
+function resolveBostaMerchantReference(rawShipment: unknown): string {
+  const candidates = getBostaReferenceCandidates(rawShipment);
+
+  // Prefer UUID-looking refs because EasyOrders providerOrderId in this project is UUID.
+  const uuid = candidates.find((v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v));
+  if (uuid) return uuid;
+
+  return candidates[0] ?? "";
+}
+
+function getBostaTrackingNumber(rawShipment: unknown): string {
+  return firstStringDeep(rawShipment, [
+    "trackingNumber",
+    "tracking_number",
+    "trackingNo",
+    "tracking_no",
+    "awb",
+    "_id",
+    "id",
+  ]) ?? crypto.randomUUID();
+}
+
+function getNumberDeep(source: unknown, paths: string[]): number {
+  for (const path of paths) {
+    const value = getPath(source, path);
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  }
+  return 0;
+}
+
+function parseDate(value: unknown): Date | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function getStateCode(rawShipment: unknown): number | null {
+  const raw = asRecord(rawShipment);
+  const state = raw.state;
+
+  if (typeof state === "number") return state;
+  if (state && typeof state === "object") {
+    const code = (state as Record<string, unknown>).code;
+    if (typeof code === "number") return code;
+    if (typeof code === "string" && Number.isFinite(Number(code))) return Number(code);
+  }
+
+  const code = raw.stateCode ?? raw.statusCode ?? raw.code;
+  if (typeof code === "number") return code;
+  if (typeof code === "string" && Number.isFinite(Number(code))) return Number(code);
+
+  return null;
+}
+
+function getStateText(rawShipment: unknown): string {
+  const raw = asRecord(rawShipment);
+  const state = raw.state;
+  const parts: string[] = [];
+
+  if (typeof state === "string") parts.push(state);
+  if (state && typeof state === "object") {
+    const obj = state as Record<string, unknown>;
+    for (const key of ["value", "name", "label", "childState", "status"]) {
+      const value = obj[key];
+      if (typeof value === "string") parts.push(value);
+    }
+  }
+
+  for (const key of ["status", "shipmentStatus", "stateValue", "stateName", "statusName"]) {
+    const value = raw[key];
+    if (typeof value === "string") parts.push(value);
+  }
+
+  return parts.join(" ").toLowerCase();
+}
+
+function resolveBostaShipmentStatus(rawShipment: unknown): ShipmentStatus {
+  const code = getStateCode(rawShipment);
+  if (code != null && BOSTA_STATE_MAP[code] != null) {
+    return BOSTA_STATE_MAP[code] as ShipmentStatus;
+  }
+
+  const text = getStateText(rawShipment);
+
+  if (text.includes("delivered") || text.includes("success") || text.includes("تم بنجاح") || text.includes("تم التسليم")) {
+    return "DELIVERED";
+  }
+  if (text.includes("return") || text.includes("returned") || text.includes("مرتجع") || text.includes("استرجاع")) {
+    return "RETURNED";
+  }
+  if (text.includes("cancel") || text.includes("terminated") || text.includes("ملغي") || text.includes("إلغاء")) {
+    return "CANCELLED";
+  }
+  if (text.includes("failed") || text.includes("refused") || text.includes("reject") || text.includes("فشل") || text.includes("رفض")) {
+    return "DELIVERY_FAILED";
+  }
+  if (text.includes("out for delivery") || text.includes("مندوب") || text.includes("خارج للتسليم")) {
+    return "OUT_FOR_DELIVERY";
+  }
+  if (text.includes("picked") || text.includes("received") || text.includes("hub")) {
+    return "PICKED_UP";
+  }
+  if (text.includes("transit") || text.includes("قيد")) {
+    return "IN_TRANSIT";
+  }
+
+  return "CREATED";
+}
+
+function resolveBostaDeliveryDate(rawShipment: unknown, status: ShipmentStatus): Date | null {
+  const date =
+    parseDate(getPath(rawShipment, "deliveryDate")) ??
+    parseDate(getPath(rawShipment, "delivery_date")) ??
+    parseDate(getPath(rawShipment, "deliveredAt")) ??
+    parseDate(getPath(rawShipment, "delivered_at")) ??
+    parseDate(getPath(rawShipment, "deliveryTime"));
+
+  if (date) return date;
+  if (status === "DELIVERED") {
+    return parseDate(getPath(rawShipment, "updatedAt")) ?? parseDate(getPath(rawShipment, "updated_at")) ?? new Date();
+  }
+  return null;
+}
+
+function resolveBostaReturnDate(rawShipment: unknown, status: ShipmentStatus): Date | null {
+  const date =
+    parseDate(getPath(rawShipment, "returnDate")) ??
+    parseDate(getPath(rawShipment, "return_date")) ??
+    parseDate(getPath(rawShipment, "returnedAt")) ??
+    parseDate(getPath(rawShipment, "returned_at"));
+
+  if (date) return date;
+  if (status === "RETURNED") {
+    return parseDate(getPath(rawShipment, "updatedAt")) ?? parseDate(getPath(rawShipment, "updated_at")) ?? new Date();
+  }
+  return null;
+}
+
+function resolveBostaShippingZone(rawShipment: unknown): string | null {
+  return firstStringDeep(rawShipment, ["zone", "district", "city", "name", "nameAr"]) ?? null;
 }
 
 import { BOSTA_STATE_MAP } from "@/adapters/bosta/types/bosta.types";

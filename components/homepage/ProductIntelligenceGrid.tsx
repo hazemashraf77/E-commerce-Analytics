@@ -1,6 +1,6 @@
 "use client";
-import { useState, useEffect } from "react";
-import { FormulaMiniInspector } from "./FormulaMiniInspectorV3";
+
+import { useEffect, useMemo, useState } from "react";
 import type { Terms, DimMode } from "./locale";
 import type { ProductKpiRow } from "@/modules/formula-engine";
 import { cn } from "@/lib/utils";
@@ -11,291 +11,346 @@ interface GridProps {
   dimMode: DimMode;
   products: ProductKpiRow[];
   search: string;
-  /** When set by parent (View Selector), syncs the internal tab */
   activeView?: "executive" | "finance" | "marketing" | "inventory" | "shipping" | "orders" | "all";
-  /** Loading skeleton mode */
   loading?: boolean;
-  /** Empty state label */
   emptyLabel?: string;
 }
 
-type TabIdx = 0|1|2|3|4|5|6|7|8|9;
-type FilterKey = "all"|"profitable"|"losing"|"lowStock"|"highCpa"|"highReturns"|"attention";
-type ViewKey = "ceo"|"finance"|"marketing"|"shipping"|"inventory";
+type ProductRow = ProductKpiRow & Record<string, number | string | null | undefined>;
 
-const VIEW_TAB: Record<ViewKey, TabIdx> = { ceo:0, finance:4, marketing:5, shipping:6, inventory:7 };
-const FILTER_FNS: Record<FilterKey, (p: ProductKpiRow) => boolean> = {
-  all: () => true,
-  profitable: p => p.trueProfit > 0,
-  losing: p => p.trueProfit < 0,
-  lowStock: p => p.inventoryStatus === "LOW_STOCK" || p.inventoryStatus === "OUT_OF_STOCK",
-  highCpa: p => (p.trueCpa ?? 0) > 120,
-  highReturns: p => (p.returnRate ?? 0) > 0.08,
-  attention: p => p.inventoryStatus !== "IN_STOCK" || (p.ppap ?? 0) < 1 || (p.returnRate ?? 0) > 0.1,
+type ColumnGroupKey =
+  | "easy"
+  | "bosta"
+  | "finance"
+  | "marketing"
+  | "inventory"
+  | "decision";
+
+const GROUP_LABELS: Record<ColumnGroupKey, string> = {
+  easy: "EasyOrders",
+  bosta: "Bosta",
+  finance: "الماليات",
+  marketing: "التسويق",
+  inventory: "المخزون",
+  decision: "القرار",
 };
 
-const INV_CLS: Record<string, string> = { IN_STOCK:"text-green-600", LOW_STOCK:"text-amber-500", OUT_OF_STOCK:"text-red-600", DEAD_STOCK:"text-gray-400" };
-const INV_SHORT: Record<string, string> = { IN_STOCK:"OK", LOW_STOCK:"Low", OUT_OF_STOCK:"Out", DEAD_STOCK:"Dead" };
+const GROUP_STYLES: Record<ColumnGroupKey, string> = {
+  easy: "bg-blue-50 text-blue-700 border-blue-100",
+  bosta: "bg-amber-50 text-amber-700 border-amber-100",
+  finance: "bg-green-50 text-green-700 border-green-100",
+  marketing: "bg-purple-50 text-purple-700 border-purple-100",
+  inventory: "bg-orange-50 text-orange-700 border-orange-100",
+  decision: "bg-red-50 text-red-700 border-red-100",
+};
 
-// Term tooltip
-function TermTip({ term, label, tip }: { term: string; label: string; tip: string }) {
-  const [open, setOpen] = useState(false);
+const GROUP_COL_SPAN: Record<ColumnGroupKey, number> = {
+  easy: 10,
+  bosta: 13,
+  finance: 7,
+  marketing: 3,
+  inventory: 2,
+  decision: 2,
+};
+
+const INV_SHORT: Record<string, string> = {
+  IN_STOCK: "OK",
+  LOW_STOCK: "Low",
+  OUT_OF_STOCK: "Out",
+  DEAD_STOCK: "Dead",
+};
+
+function asNumber(value: unknown): number {
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function egp(n: number | null | undefined): string {
+  return n == null || !Number.isFinite(n) ? "—" : `EGP ${Math.round(n).toLocaleString("en-EG")}`;
+}
+
+function pct(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  const value = Math.abs(n) <= 1 ? n * 100 : n;
+  return `${value.toFixed(1)}%`;
+}
+
+function mult(n: number | null | undefined): string {
+  return n == null || !Number.isFinite(n) ? "—" : `${n.toFixed(2)}×`;
+}
+
+function countValue(value: unknown, className?: string) {
+  const n = asNumber(value);
   return (
-    <th className="px-2 py-2 text-left relative group">
-      <span className="text-xs font-semibold text-gray-400 whitespace-nowrap cursor-help underline decoration-dotted"
-        onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
-        {label}
-      </span>
-      {open && (
-        <div className="absolute z-50 top-7 left-0 bg-gray-800 text-white text-xs rounded-lg px-3 py-2 w-52 shadow-lg whitespace-normal pointer-events-none">
-          {tip}
-        </div>
-      )}
-    </th>
+    <span className={cn("tabular-nums", className)}>
+      {n > 0 ? n.toLocaleString("en-EG") : "—"}
+    </span>
   );
 }
 
-function safe(n: number | null | undefined, digits = 0): string {
-  if (n == null || !isFinite(n)) return "—";
-  return digits > 0 ? n.toFixed(digits) : Math.round(n).toLocaleString("en-EG");
-}
-function egp(n: number | null | undefined): string {
-  return n == null || !isFinite(n) ? "—" : `EGP ${Math.round(n).toLocaleString("en-EG")}`;
-}
-function pct(n: number | null | undefined): string {
-  return n == null || !isFinite(n) ? "—" : `${n.toFixed(1)}%`;
-}
-function mult(n: number | null | undefined): string {
-  return n == null || !isFinite(n) ? "—" : `${n.toFixed(2)}×`;
+function moneyCell(value: number | null | undefined, className?: string) {
+  return <span className={cn("tabular-nums", className)}>{egp(value)}</span>;
 }
 
-function NameCell({ p }: { p: ProductKpiRow & { imageUrl?: string | null } }) {
+function NameCell({ p }: { p: ProductRow }) {
+  const initials = String(p.sku || p.productName || "P").slice(0, 2).toUpperCase();
+
   return (
-    <td className="px-3 py-2 sticky left-0 bg-white border-r border-gray-50 z-10">
+    <td className="w-[280px] min-w-[280px] px-3 py-2 sticky left-0 bg-white border-r border-slate-300 z-20">
       <div className="flex items-center gap-2">
         {p.imageUrl ? (
           <img
-            src={p.imageUrl}
-            alt={p.productName}
-            className="w-8 h-8 rounded object-cover border border-gray-100 shrink-0"
-            onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
+            src={String(p.imageUrl)}
+            alt={String(p.productName)}
+            className="w-9 h-9 rounded-lg object-cover border border-slate-200 shrink-0"
+            onError={(e) => {
+              (e.target as HTMLImageElement).style.display = "none";
+            }}
           />
         ) : (
-          <div className="w-8 h-8 rounded bg-gray-100 shrink-0 flex items-center justify-center text-xs text-gray-300 font-mono">
-            {p.sku.slice(0, 2).toUpperCase()}
+          <div className="w-9 h-9 rounded-lg bg-gray-100 shrink-0 flex items-center justify-center text-xs text-gray-400 font-mono">
+            {initials}
           </div>
         )}
+
         <div className="min-w-0">
-          <div className="font-medium text-gray-900 truncate max-w-28 text-xs" title={p.productName}>{p.productName}</div>
-          <div className="text-gray-400 font-mono text-xs truncate">{p.sku}</div>
+          <div className="font-semibold text-gray-900 truncate max-w-[190px] text-xs" title={String(p.productName)}>
+            {p.productName}
+          </div>
+          <div className="text-gray-400 font-mono text-[11px] truncate">{p.sku}</div>
+          {p.category ? (
+            <div className="text-[10px] text-gray-300 truncate">{p.category}</div>
+          ) : null}
         </div>
       </div>
     </td>
   );
 }
 
-export function ProductIntelligenceGrid({ t, locale, dimMode, products, search, activeView, loading, emptyLabel }: GridProps) {
-  const [tab, setTab] = useState<TabIdx>(0);
-  const [filter, setFilter] = useState<FilterKey>("all");
-  const [view, setView]   = useState<ViewKey | null>(null);
+function calcHealthScore(p: ProductRow): number {
+  const deliveryRate = typeof p.deliveryRate === "number" ? p.deliveryRate : null;
+  const returnRate = typeof p.returnRate === "number" ? p.returnRate : null;
+  const trueProfit = Number(p.trueProfit ?? 0);
+  const stockStatus = String(p.inventoryStatus ?? "IN_STOCK");
 
-  // Sync external activeView → internal tab (075: "Views only change visible columns")
+  if (trueProfit < 0) return 25;
+  if (stockStatus === "OUT_OF_STOCK") return 35;
+  if (stockStatus === "DEAD_STOCK") return 45;
+  if (deliveryRate != null && asNumber(p.ordersShipped) > 0 && deliveryRate < 0.6) return 40;
+  if (returnRate != null && returnRate > 0.15) return 45;
+  if (stockStatus === "LOW_STOCK") return 60;
+  if (trueProfit > 0 && (deliveryRate == null || deliveryRate >= 0.8)) return 80;
+  return 70;
+}
+
+function alertForProduct(p: ProductRow): string {
+  const invStatus = String(p.inventoryStatus ?? "IN_STOCK");
+  if (invStatus !== "IN_STOCK") return INV_SHORT[invStatus] ?? invStatus;
+  if (Number(p.trueProfit ?? 0) < 0) return "Loss";
+  if (typeof p.trueCpa === "number" && p.trueCpa > 200) return "High CPA";
+  if (typeof p.returnRate === "number" && p.returnRate > 0.15) return "Returns";
+  return "";
+}
+
+export function ProductIntelligenceGrid({
+  t,
+  locale,
+  dimMode,
+  products,
+  search,
+  activeView,
+  loading,
+  emptyLabel,
+}: GridProps) {
+  const [visibleGroups, setVisibleGroups] = useState<Record<ColumnGroupKey, boolean>>({
+    easy: true,
+    bosta: true,
+    finance: true,
+    marketing: true,
+    inventory: true,
+    decision: true,
+  });
+
+  const [columnsOpen, setColumnsOpen] = useState(false);
+
   useEffect(() => {
-    if (!activeView) return;
-    const MAP: Record<string, TabIdx> = {
-      executive: 0, orders: 1, finance: 4, marketing: 5,
-      shipping: 6, inventory: 7, all: 0,
-    };
-    const newTab = MAP[activeView];
-    if (newTab !== undefined) setTab(newTab);
-  }, [activeView]);
+    void activeView;
+    void dimMode;
+  }, [activeView, dimMode]);
 
-  const filtered = products.filter(p =>
-    (p.productName.toLowerCase().includes(search.toLowerCase()) || p.sku.toLowerCase().includes(search.toLowerCase()))
-    && FILTER_FNS[filter](p)
-  );
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
 
-  function selectView(k: ViewKey) {
-    setView(k);
-    setTab(VIEW_TAB[k]);
-  }
+    return products.filter((p) => {
+      const name = String(p.productName ?? "").toLowerCase();
+      const sku = String(p.sku ?? "").toLowerCase();
+      return !q || name.includes(q) || sku.includes(q);
+    });
+  }, [products, search]);
 
-  // dim value helper
-  function dim(total: number, perOrder: number | null, perItem: number | null): string {
-    if (dimMode === "perOrder") return perOrder != null ? egp(perOrder) : "—";
-    if (dimMode === "perItem")  return perItem != null  ? egp(perItem)  : "—";
-    return egp(total);
-  }
+  const visibleColSpan =
+    1 +
+    (Object.entries(visibleGroups) as [ColumnGroupKey, boolean][])
+      .filter(([, visible]) => visible)
+      .reduce((sum, [group]) => sum + GROUP_COL_SPAN[group], 0);
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-      {/* Controls */}
-      <div className="px-3 pt-3 pb-2 border-b border-gray-50 space-y-2">
-        {/* Saved views */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold text-gray-400">{t.savedViews}</span>
-          {(Object.entries(t.views) as [ViewKey, string][]).map(([k, v]) => (
-            <button key={k} onClick={() => selectView(k)}
-              className={cn("rounded-lg px-2.5 py-1 text-xs font-medium border transition-colors",
-                view === k ? "bg-gray-900 text-white border-gray-900" : "border-gray-200 text-gray-500 hover:bg-gray-50")}>
-              {v}
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="px-3 pt-3 pb-2 border-b border-slate-100">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-semibold text-gray-800">جدول المنتجات الرئيسي</span>
+            <span className="text-gray-300">|</span>
+            <span className="text-gray-500">{filtered.length} منتج</span>
+            <span className="text-gray-300">|</span>
+            <span className="text-gray-400">EasyOrders + Bosta + الماليات + التسويق + المخزون</span>
+          </div>
+
+          <div className="relative">
+            <button
+              onClick={() => setColumnsOpen((v) => !v)}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
+            >
+              الأعمدة ⚙
             </button>
-          ))}
-        </div>
-        {/* Filters */}
-        <div className="flex flex-wrap items-center gap-1.5">
-          {(Object.entries(t.filters) as [FilterKey, string][]).map(([k, v]) => {
-            const cnt = k === "all" ? products.length : products.filter(FILTER_FNS[k]).length;
-            return (
-              <button key={k} onClick={() => setFilter(k)}
-                className={cn("rounded-full px-2.5 py-0.5 text-xs font-medium border transition-colors",
-                  filter === k ? "bg-gray-900 text-white border-gray-900" : "border-gray-200 text-gray-500 hover:bg-gray-50")}>
-                {v}{k !== "all" && cnt > 0 && <span className="ml-1 opacity-70">({cnt})</span>}
-              </button>
-            );
-          })}
+
+            {columnsOpen && (
+              <div className="absolute top-9 right-0 z-50 w-60 rounded-xl border border-slate-200 bg-white shadow-lg p-3 space-y-2">
+                {(Object.entries(GROUP_LABELS) as [ColumnGroupKey, string][]).map(([key, label]) => (
+                  <label key={key} className="flex items-center justify-between text-xs text-gray-600">
+                    <span>{label}</span>
+                    <input
+                      type="checkbox"
+                      checked={visibleGroups[key]}
+                      onChange={() => setVisibleGroups((v) => ({ ...v, [key]: !v[key] }))}
+                    />
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Tab bar */}
-      <div className="flex overflow-x-auto border-b border-gray-50 bg-gray-50/50">
-        {t.tabs.map((tabLabel, i) => (
-          <button key={i} onClick={() => { setTab(i as TabIdx); setView(null); }}
-            className={cn("shrink-0 px-3 py-2 text-xs font-medium border-b-2 transition-colors whitespace-nowrap",
-              tab === i ? "border-gray-900 text-gray-900 bg-white" : "border-transparent text-gray-400 hover:text-gray-600")}>
-            {tabLabel}
-          </button>
-        ))}
-      </div>
-
-      {/* Table */}
       <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="bg-gray-50 border-b border-gray-100">
-              <th className="px-3 py-2 text-left text-xs font-semibold text-gray-400 sticky left-0 bg-gray-50 z-10 whitespace-nowrap">{t.col.product}</th>
-              {tab === 0 && <>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">جديد</th>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">معلق</th>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">مؤكد</th>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">ملغي</th>
+        <table className="w-full text-xs border-separate border-spacing-0">
+          <thead className="sticky top-0 z-30">
+            <tr className="bg-white border-b border-slate-200">
+              <th className="w-[280px] min-w-[280px] px-3 py-2 sticky left-0 bg-white z-40 text-xs font-bold text-gray-600 border-r border-slate-300">
+                المنتج
+              </th>
 
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">Bosta New</th>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">Picked</th>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">In Transit</th>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">OFD</th>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.delivered}</th>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">Refused</th>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">Returned</th>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">Exchange</th>
+              {(Object.entries(GROUP_LABELS) as [ColumnGroupKey, string][]).map(([key, label]) =>
+                visibleGroups[key] ? (
+                  <th
+                    key={key}
+                    colSpan={GROUP_COL_SPAN[key]}
+                    className={cn(
+                      "px-2 py-2 text-center text-xs font-bold border-x",
+                      GROUP_STYLES[key],
+                    )}
+                  >
+                    {label}
+                  </th>
+                ) : null,
+              )}
+            </tr>
 
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.revenue}</th>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.cogs}</th>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.shipping}</th>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.returnShip}</th>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.totalCost}</th>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.trueProfit}</th>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.margin}</th>
+            <tr className="bg-gray-50 border-b border-slate-200">
+              <th className="w-[280px] min-w-[280px] px-3 py-2 text-left text-xs font-semibold text-gray-500 sticky left-0 bg-gray-50 z-40 whitespace-nowrap border-r border-slate-300">
+                {t.col.product}
+              </th>
 
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.adSpend}</th>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.trueCpa}</th>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.trueRoas}</th>
+              {visibleGroups.easy && (
+                <>
+                  <th className="px-2 py-2 border-r border-l border-slate-300 bg-blue-50 text-gray-600">جديد</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-blue-50 text-gray-600">معلق</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-blue-50 text-gray-600">مؤكد</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-blue-50 text-gray-600">قيد التجهيز</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-blue-50 text-gray-600">جاهز للشحن</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-blue-50 text-gray-600">إلى بوسطة</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-blue-50 text-gray-600">تم التسليم</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-blue-50 text-gray-600">ملغي</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-blue-50 text-gray-600">Spam</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-blue-50 text-gray-600">يحتاج مراجعة</th>
+                </>
+              )}
 
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.stock}</th>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.days}</th>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.health}</th>
-  <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.alert}</th>
-</>}
-              {tab === 1 && <>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400 whitespace-nowrap">Created</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400 whitespace-nowrap">Confirmed</th>
-                <TermTip term="picked"      label={t.terms.picked.split(" ").slice(-1)[0]}       tip={t.terms.picked} />
-                <TermTip term="sentToBosta" label={t.sources.bosta}                              tip={t.terms.sentToBosta} />
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400 whitespace-nowrap">In Transit</th>
-                <TermTip term="delivered"   label={t.col.delivered}  tip={t.terms.delivered} />
-                <TermTip term="rejected"    label={t.col.rejected}   tip={t.terms.rejected} />
-                <TermTip term="returning"   label={t.col.returning}  tip={t.terms.returning} />
-                <TermTip term="returned"    label={t.col.returned}   tip={t.terms.returned} />
-              </>}
-              {tab === 2 && <>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.revenue}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">Rev/Order</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">Rev/Item</th>
-              </>}
-              {tab === 3 && <>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.cogs}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.packaging}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.shipping}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.returnShip}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.ads}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.totalCost}</th>
-              </>}
-              {tab === 4 && <>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.grossProfit}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.netProfit}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.trueProfit}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.margin}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.profitPerOrder}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.profitLeakage}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.ppap}</th>
-              </>}
-              {tab === 5 && <>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.adSpend}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.adCpa}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.deliveredCpa}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.trueCpa}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.deliveredRoas}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.trueRoas}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.ppap}</th>
-              </>}
-              {tab === 6 && <>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.shipping}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.returnShip}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.deliveryRate}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.returnRate}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.refusalRate}</th>
-              </>}
-              {tab === 7 && <>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.stock}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.invValue}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.cashLocked}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.days}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.velocity}</th>
-              </>}
-              {tab === 8 && <>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">Expected Cash</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.cashLocked}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.invValue}</th>
-              </>}
-              {tab === 9 && <>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">{t.col.health}</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">Biggest Risk</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">Opportunity</th>
-                <th className="px-2 py-2 text-xs font-semibold text-gray-400">Action</th>
-              </>}
+              {visibleGroups.bosta && (
+                <>
+                  <th className="px-2 py-2 border-r border-l border-slate-300 bg-amber-50 text-gray-600">بوسطة جديد</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-amber-50 text-gray-600">تم الاستلام</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-amber-50 text-gray-600">في الطريق</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-amber-50 text-gray-600">خارج للتسليم</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-amber-50 text-gray-600">مُسلّم</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-amber-50 text-gray-600">مرفوض</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-amber-50 text-gray-600">مرتجع</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-amber-50 text-gray-600">استرجاع تم</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-amber-50 text-gray-600">استبدال</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-amber-50 text-gray-600">استبدال تم</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-amber-50 text-gray-600">ملغي</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-amber-50 text-gray-600">مشكلة</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-amber-50 text-gray-600">Lost</th>
+                </>
+              )}
+
+              {visibleGroups.finance && (
+                <>
+                  <th className="px-2 py-2 border-r border-l border-slate-300 bg-green-50 text-gray-600">الإيراد</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-green-50 text-gray-600">تكلفة البضاعة</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-green-50 text-gray-600">شحن</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-green-50 text-gray-600">شحن مرتجع</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-green-50 text-gray-600">إجمالي التكلفة</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-green-50 text-gray-600">الربح الحقيقي</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-green-50 text-gray-600">الهامش</th>
+                </>
+              )}
+
+              {visibleGroups.marketing && (
+                <>
+                  <th className="px-2 py-2 border-r border-l border-slate-300 bg-purple-50 text-gray-600">إعلانات</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-purple-50 text-gray-600">True CPA</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-purple-50 text-gray-600">True ROAS</th>
+                </>
+              )}
+
+              {visibleGroups.inventory && (
+                <>
+                  <th className="px-2 py-2 border-r border-l border-slate-300 bg-orange-50 text-gray-600">المخزون</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-orange-50 text-gray-600">أيام متبقية</th>
+                </>
+              )}
+
+              {visibleGroups.decision && (
+                <>
+                  <th className="px-2 py-2 border-r border-l border-slate-300 bg-red-50 text-gray-600">الصحة</th>
+                  <th className="px-2 py-2 border-r border-slate-200 bg-red-50 text-gray-600">تنبيه</th>
+                </>
+              )}
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-50">
-            {/* Loading skeleton rows */}
-            {loading && filtered.length === 0 && Array.from({ length: 5 }).map((_, i) => (
-              <tr key={`skeleton-${i}`}>
-                <td className="px-3 py-3 sticky left-0 bg-white border-r border-gray-50">
-                  <div className="h-4 w-28 bg-gray-100 rounded animate-pulse mb-1" />
-                  <div className="h-3 w-16 bg-gray-50 rounded animate-pulse" />
-                </td>
-                {Array.from({ length: 6 }).map((_, j) => (
-                  <td key={j} className="px-2 py-3">
-                    <div className="h-4 w-16 bg-gray-50 rounded animate-pulse" />
+
+          <tbody className="divide-y divide-slate-100">
+            {loading && filtered.length === 0 &&
+              Array.from({ length: 5 }).map((_, i) => (
+                <tr key={`skeleton-${i}`}>
+                  <td className="px-3 py-3 sticky left-0 bg-white border-r border-slate-300">
+                    <div className="h-4 w-28 bg-gray-100 rounded animate-pulse mb-1" />
+                    <div className="h-3 w-16 bg-gray-50 rounded animate-pulse" />
                   </td>
-                ))}
-              </tr>
-            ))}
-            {/* Empty state */}
+                  {Array.from({ length: Math.max(6, visibleColSpan - 1) }).map((_, j) => (
+                    <td key={j} className="px-2 py-3">
+                      <div className="h-4 w-16 bg-gray-50 rounded animate-pulse" />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+
             {!loading && filtered.length === 0 && (
               <tr>
-                <td colSpan={12} className="px-4 py-12 text-center">
+                <td colSpan={visibleColSpan} className="px-4 py-12 text-center">
                   <p className="text-sm text-gray-400 font-medium">
-                    {emptyLabel ?? (locale === "ar" ? "لا توجد منتجات" : "No products found")}
+                    {emptyLabel ?? (locale === "ar" ? "لا توجد منتجات أو لم يتم مزامنة البيانات" : "No products found")}
                   </p>
                   <p className="text-xs text-gray-300 mt-1">
                     {locale === "ar"
@@ -305,133 +360,108 @@ export function ProductIntelligenceGrid({ t, locale, dimMode, products, search, 
                 </td>
               </tr>
             )}
-            {filtered.map(p => {
-              const totalCost = (p.cogs||0)+(p.packagingCost||0)+(p.shippingCost||0)+(p.returnShippingCost||0)+(p.adSpend||0);
-              const invStatus = p.inventoryStatus ?? "IN_STOCK";
-              const alert = invStatus !== "IN_STOCK" ? (INV_SHORT[invStatus] ?? invStatus) : (p.ppap ?? 1) < 1 ? "PPAP<1" : "";
-              const velocity = p.ordersDelivered > 0 ? (p.ordersDelivered / 30).toFixed(1) : "0";
-              const risk = invStatus !== "IN_STOCK" ? `Stock: ${INV_SHORT[invStatus]}` : (p.ppap ?? 0) < 1 ? "PPAP < 1" : "—";
-              const opp = (p.trueRoas ?? 0) >= 1.5 ? "Scale ads" : (p.deliveryRate ?? 0) >= 0.9 ? "Strong delivery" : "—";
-              const action = invStatus === "LOW_STOCK" || invStatus === "OUT_OF_STOCK" ? "Reorder" : (p.ppap ?? 0) < 1 ? "Review ads" : "Monitor";
+
+            {filtered.map((product) => {
+              const p = product as ProductRow;
+              const totalCost =
+                asNumber(p.cogs) +
+                asNumber(p.packagingCost) +
+                asNumber(p.shippingCost) +
+                asNumber(p.returnShippingCost) +
+                asNumber(p.adSpend);
+
+              const healthScore = calcHealthScore(p);
+              const alert = alertForProduct(p);
 
               return (
-                <tr key={p.productId} className="hover:bg-gray-50/60 transition-colors">
+                <tr key={String(p.productId)} className="hover:bg-gray-50/60 transition-colors">
                   <NameCell p={p} />
-                  {tab === 0 && <>
-  <td className="px-2 py-2 text-center">{p.ordersNew || "—"}</td>
-  <td className="px-2 py-2 text-center">{p.ordersPending || "—"}</td>
-  <td className="px-2 py-2 text-center">{p.ordersConfirmed || "—"}</td>
-  <td className="px-2 py-2 text-center text-red-500">{p.ordersCancelled || "—"}</td>
 
-  <td className="px-2 py-2 text-center">{p.bostaNew || "—"}</td>
-  <td className="px-2 py-2 text-center">{p.bostaPicked || "—"}</td>
-  <td className="px-2 py-2 text-center">{p.bostaInTransit || "—"}</td>
-  <td className="px-2 py-2 text-center">{p.bostaOutForDelivery || "—"}</td>
-  <td className="px-2 py-2 text-center font-semibold text-green-600">{p.ordersDelivered || "—"}</td>
-  <td className="px-2 py-2 text-center text-red-500">{p.ordersRefused || "—"}</td>
-  <td className="px-2 py-2 text-center text-amber-600">{p.ordersReturned || "—"}</td>
-  <td className="px-2 py-2 text-center">{p.bostaExchange || "—"}</td>
+                  {visibleGroups.easy && (
+                    <>
+                      <td className="px-2 py-2 text-center border-r border-l border-slate-300">{countValue(p.ordersNew)}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{countValue(p.ordersPending)}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{countValue(p.ordersConfirmed)}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{countValue(p.ordersProcessing)}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{countValue(p.ordersReadyToShip)}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{countValue(p.ordersSentToBosta ?? p.ordersShippedStatus)}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{countValue(p.ordersDeliveredStatus, "text-green-600 font-semibold")}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{countValue(p.ordersCancelled, "text-red-500")}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{countValue(p.ordersSpam, "text-gray-400")}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{countValue(p.ordersNeedsReview, "text-amber-600")}</td>
+                    </>
+                  )}
 
-  <td className="px-2 py-2 tabular-nums">{egp(p.revenue)}</td>
-  <td className="px-2 py-2 tabular-nums">{egp(p.cogs)}</td>
-  <td className="px-2 py-2 tabular-nums">{egp(p.shippingCost)}</td>
-  <td className="px-2 py-2 tabular-nums">{egp(p.returnShippingCost)}</td>
-  <td className="px-2 py-2 tabular-nums">{egp(totalCost)}</td>
-  <td className={cn("px-2 py-2 tabular-nums font-semibold", p.trueProfit >= 0 ? "text-green-600" : "text-red-600")}>
-    {egp(p.trueProfit)}
-  </td>
-  <td className="px-2 py-2 tabular-nums">{pct(p.profitMarginPct)}</td>
+                  {visibleGroups.bosta && (
+                    <>
+                      <td className="px-2 py-2 text-center border-r border-l border-slate-300">{countValue(p.bostaNew)}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{countValue(p.bostaReceived)}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{countValue(p.bostaInTransit)}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{countValue(p.bostaOutForDelivery)}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{countValue(p.bostaDelivered, "text-green-600 font-semibold")}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{countValue(p.bostaRefused || p.ordersRefused, "text-red-500")}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{countValue(p.bostaReturned || p.ordersReturned, "text-amber-600")}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{countValue(p.bostaReturnCompleted, "text-amber-700")}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{countValue(p.bostaExchange, "text-blue-500")}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{countValue(p.bostaExchangeCompleted, "text-blue-700")}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{countValue(p.bostaCancelled, "text-gray-400")}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{countValue(p.bostaException, "text-amber-500")}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{countValue(p.bostaLost, "text-red-600")}</td>
+                    </>
+                  )}
 
-  <td className="px-2 py-2 tabular-nums">{p.adSpend > 0 ? egp(p.adSpend) : "—"}</td>
-  <td className="px-2 py-2 tabular-nums">{p.trueCpa != null ? egp(p.trueCpa) : "—"}</td>
-  <td className="px-2 py-2 tabular-nums">{p.trueRoas != null ? mult(p.trueRoas) : "—"}</td>
+                  {visibleGroups.finance && (
+                    <>
+                      <td className="px-2 py-2 text-center border-r border-l border-slate-300">{moneyCell(p.revenue)}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{moneyCell(p.cogs)}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{moneyCell(p.shippingCost)}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{moneyCell(p.returnShippingCost)}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{moneyCell(totalCost)}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">
+                        {moneyCell(p.trueProfit, Number(p.trueProfit ?? 0) >= 0 ? "text-green-600 font-semibold" : "text-red-600 font-semibold")}
+                      </td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200 tabular-nums">{pct(p.profitMarginPct)}</td>
+                    </>
+                  )}
 
-  <td className="px-2 py-2 text-center font-semibold">{p.stockAvailable}</td>
-  <td className="px-2 py-2 text-center">{p.daysRemaining != null ? `${Math.round(p.daysRemaining)}d` : "∞"}</td>
-  <td className="px-2 py-2 text-center font-semibold">74</td>
-  <td className="px-2 py-2 text-center">
-    {alert ? <span className="text-red-500">{alert}</span> : "—"}
-  </td>
-</>}
-                  {tab === 1 && <>
-                    <td className="px-2 py-2 text-center">{p.ordersCreated}</td>
-                    <td className="px-2 py-2 text-center">{p.ordersConfirmed}</td>
-                    <td className="px-2 py-2 text-center text-blue-600">{p.ordersShipped}</td>
-                    <td className="px-2 py-2 text-center text-blue-500">{p.ordersShipped}</td>
-                    <td className="px-2 py-2 text-center">{Math.max(0, p.ordersShipped - p.ordersDelivered - p.ordersRefused)}</td>
-                    <td className="px-2 py-2 text-center font-semibold text-green-600">{p.ordersDelivered}</td>
-                    <td className="px-2 py-2 text-center text-red-500">{p.ordersRefused || "—"}</td>
-                    <td className="px-2 py-2 text-center text-amber-500">{p.ordersReturned ? Math.ceil(p.ordersReturned / 2) : "—"}</td>
-                    <td className="px-2 py-2 text-center text-amber-600">{p.ordersReturned || "—"}</td>
-                  </>}
-                  {tab === 2 && <>
-                    <td className="px-2 py-2 tabular-nums"><div className="flex items-center gap-0.5">{dim(p.revenue, p.revenuePerOrder, p.revenuePerItem)}<FormulaMiniInspector formulaId="FIN-001" locale={locale} /></div></td>
-                    <td className="px-2 py-2 tabular-nums">{egp(p.revenuePerOrder)}</td>
-                    <td className="px-2 py-2 tabular-nums">{egp(p.revenuePerItem)}</td>
-                  </>}
-                  {tab === 3 && <>
-                    <td className="px-2 py-2 tabular-nums"><div className="flex items-center gap-0.5">{egp(p.cogs)}<FormulaMiniInspector formulaId="INV-001" locale={locale} /></div></td>
-                    <td className="px-2 py-2 tabular-nums">{egp(p.packagingCost)}</td>
-                    <td className="px-2 py-2 tabular-nums">{egp(p.shippingCost)}</td>
-                    <td className="px-2 py-2 tabular-nums">{egp(p.returnShippingCost)}</td>
-                    <td className="px-2 py-2 tabular-nums">{egp(p.adSpend)}</td>
-                    <td className="px-2 py-2 tabular-nums font-semibold">{egp(totalCost)}</td>
-                  </>}
-                  {tab === 4 && <>
-                    <td className="px-2 py-2 tabular-nums text-green-600"><div className="flex items-center gap-0.5">{egp(p.grossProfit)}<FormulaMiniInspector formulaId="FIN-003" locale={locale} /></div></td>
-                    <td className="px-2 py-2 tabular-nums">{egp(p.netProfit)}</td>
-                    <td className={cn("px-2 py-2 tabular-nums font-semibold", p.trueProfit >= 0 ? "text-green-600" : "text-red-600")}><div className="flex items-center gap-0.5">{egp(p.trueProfit)}<FormulaMiniInspector formulaId="TRUE-001" locale={locale} /></div></td>
-                    <td className="px-2 py-2 tabular-nums">{pct(p.profitMarginPct)}</td>
-                    <td className="px-2 py-2 tabular-nums">{egp(p.profitPerOrder)}</td>
-                    <td className="px-2 py-2 tabular-nums text-red-500">{egp(p.profitLeakage)}</td>
-                    <td className={cn("px-2 py-2 tabular-nums font-semibold", (p.ppap ?? 0) >= 1 ? "text-green-600" : "text-red-600")}><div className="flex items-center gap-0.5">{safe(p.ppap, 2)}<FormulaMiniInspector formulaId="MKT-013" locale={locale} /></div></td>
-                  </>}
-                  {tab === 5 && <>
-                    <td className="px-2 py-2 tabular-nums">{egp(p.adSpend)}</td>
-                    <td className="px-2 py-2 tabular-nums"><div className="flex items-center gap-0.5">{egp(p.advertisingCpa)}<FormulaMiniInspector formulaId="MKT-004" locale={locale} /></div></td>
-                    <td className="px-2 py-2 tabular-nums"><div className="flex items-center gap-0.5">{egp(p.deliveredCpa)}<FormulaMiniInspector formulaId="MKT-003" locale={locale} /></div></td>
-                    <td className="px-2 py-2 tabular-nums font-semibold"><div className="flex items-center gap-0.5">{egp(p.trueCpa)}<FormulaMiniInspector formulaId="MKT-002" locale={locale} /></div></td>
-                    <td className="px-2 py-2 tabular-nums"><div className="flex items-center gap-0.5">{mult(p.deliveredRoas)}<FormulaMiniInspector formulaId="MKT-011" locale={locale} /></div></td>
-                    <td className={cn("px-2 py-2 tabular-nums font-semibold", (p.trueRoas ?? 0) >= 1 ? "text-green-600" : "text-red-600")}><div className="flex items-center gap-0.5">{mult(p.trueRoas)}<FormulaMiniInspector formulaId="MKT-012" locale={locale} /></div></td>
-                    <td className={cn("px-2 py-2 tabular-nums font-semibold", (p.ppap ?? 0) >= 1 ? "text-green-600" : "text-red-600")}>{safe(p.ppap, 2)}</td>
-                  </>}
-                  {tab === 6 && <>
-                    <td className="px-2 py-2 tabular-nums">{egp(p.shippingCost)}</td>
-                    <td className="px-2 py-2 tabular-nums">{egp(p.returnShippingCost)}</td>
-                    <td className={cn("px-2 py-2 tabular-nums font-semibold", (p.deliveryRate ?? 0) >= 0.85 ? "text-green-600" : "text-red-600")}><div className="flex items-center gap-0.5">{pct((p.deliveryRate ?? 0) * 100)}<FormulaMiniInspector formulaId="SHP-001" locale={locale} /></div></td>
-                    <td className={cn("px-2 py-2 tabular-nums", (p.returnRate ?? 0) <= 0.05 ? "text-green-600" : "text-amber-500")}><div className="flex items-center gap-0.5">{pct((p.returnRate ?? 0) * 100)}<FormulaMiniInspector formulaId="SHP-002" locale={locale} /></div></td>
-                    <td className={cn("px-2 py-2 tabular-nums", (p.refusalRate ?? 0) <= 0.04 ? "text-green-600" : "text-red-600")}><div className="flex items-center gap-0.5">{pct((p.refusalRate ?? 0) * 100)}<FormulaMiniInspector formulaId="SHP-003" locale={locale} /></div></td>
-                  </>}
-                  {tab === 7 && <>
-                    <td className="px-2 py-2 text-center font-semibold">{p.stockAvailable}</td>
-                    <td className="px-2 py-2 tabular-nums"><div className="flex items-center gap-0.5">{egp(p.inventoryValue)}<FormulaMiniInspector formulaId="INV-002" locale={locale} /></div></td>
-                    <td className="px-2 py-2 tabular-nums text-amber-600">{egp(p.cashLocked)}</td>
-                    <td className={cn("px-2 py-2 tabular-nums font-semibold", p.daysRemaining != null && p.daysRemaining <= 7 ? "text-red-600" : p.daysRemaining != null && p.daysRemaining <= 14 ? "text-amber-500" : "text-green-600")}>
-                      <div className="flex items-center gap-0.5">
-                        {p.daysRemaining != null ? `${Math.round(p.daysRemaining)}d` : "∞"}
-                        <FormulaMiniInspector formulaId="INV-004" locale={locale} />
-                      </div>
-                    </td>
-                    <td className="px-2 py-2 tabular-nums">{velocity} u/d</td>
-                  </>}
-                  {tab === 8 && <>
-                    <td className="px-2 py-2 tabular-nums">{egp(p.revenue * 0.7)}</td>
-                    <td className="px-2 py-2 tabular-nums text-amber-600">{egp(p.cashLocked)}</td>
-                    <td className="px-2 py-2 tabular-nums">{egp(p.inventoryValue)}</td>
-                  </>}
-                  {tab === 9 && <>
-                    <td className="px-2 py-2 text-center font-semibold">74</td>
-                    <td className={cn("px-2 py-2 text-xs", risk !== "—" ? "text-red-500" : "text-gray-300")}>{risk}</td>
-                    <td className={cn("px-2 py-2 text-xs", opp !== "—" ? "text-green-600" : "text-gray-300")}>{opp}</td>
-                    <td className="px-2 py-2 text-xs text-gray-600">{action}</td>
-                  </>}
+                  {visibleGroups.marketing && (
+                    <>
+                      <td className="px-2 py-2 text-center border-r border-l border-slate-300">{Number(p.adSpend ?? 0) > 0 ? moneyCell(p.adSpend) : "—"}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{p.trueCpa != null ? moneyCell(p.trueCpa) : "—"}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200 tabular-nums">{p.trueRoas != null ? mult(p.trueRoas) : "—"}</td>
+                    </>
+                  )}
+
+                  {visibleGroups.inventory && (
+                    <>
+                      <td className="px-2 py-2 text-center font-semibold border-r border-l border-slate-300">{asNumber(p.stockAvailable).toLocaleString("en-EG")}</td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">{p.daysRemaining != null ? `${Math.round(Number(p.daysRemaining))}d` : "∞"}</td>
+                    </>
+                  )}
+
+                  {visibleGroups.decision && (
+                    <>
+                      <td
+                        className={cn(
+                          "px-2 py-2 text-center font-semibold border-r border-l border-slate-300",
+                          healthScore >= 70 ? "text-green-600" : healthScore >= 50 ? "text-amber-500" : "text-red-600",
+                        )}
+                      >
+                        {healthScore}
+                      </td>
+                      <td className="px-2 py-2 text-center border-r border-slate-200">
+                        {alert ? <span className="text-red-500">{alert}</span> : "—"}
+                      </td>
+                    </>
+                  )}
                 </tr>
               );
             })}
           </tbody>
         </table>
       </div>
-      <div className="px-4 py-2 border-t border-gray-50 text-xs text-gray-300">
+
+      <div className="px-4 py-2 border-t border-slate-100 text-xs text-gray-300">
         {filtered.length} {locale === "ar" ? "منتج" : "products"} · ⓘ {locale === "ar" ? "لعرض تفاصيل المعادلة" : "for formula details"}
       </div>
     </div>
