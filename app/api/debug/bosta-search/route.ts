@@ -51,6 +51,16 @@ async function tryRequest(name: string, apiKey: string, init: RequestInit): Prom
       listLength: Array.isArray(list) ? list.length : null,
       sampleKeys: sample && typeof sample === "object" ? Object.keys(sample).slice(0, 40) : [],
       sample,
+      businessReference:
+    sample?.businessReference ??
+    sample?.business_reference ??
+    sample?.merchantReference ??
+    sample?.merchant_reference ??
+    sample?.merchantOrderId ??
+    sample?.merchant_order_id ??
+    sample?.orderId ??
+    sample?.order_id ??
+    sample?.reference,
     };
   } catch (err) {
     return {
